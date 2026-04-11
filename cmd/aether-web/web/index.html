@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Aether — Anonymous broadcast protocol. No identity. No server. Permanent. Open.">
+    <title>Aether</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="index.css">
+</head>
+<body>
+    <div class="app" id="app">
+        <!-- Header -->
+        <header class="header" id="header">
+            <div class="header-left">
+                <div class="logo">
+                    <span class="logo-symbol">◈</span>
+                    <span class="logo-text">Aether</span>
+                </div>
+                <div class="status-pill" id="statusPill">
+                    <span class="status-dot"></span>
+                    <span class="status-label">connecting</span>
+                </div>
+            </div>
+            <nav class="header-nav">
+                <button class="nav-btn active" data-tab="timeline" id="navTimeline">
+                    <span class="nav-icon">◉</span> Timeline
+                </button>
+                <button class="nav-btn" data-tab="compose" id="navCompose">
+                    <span class="nav-icon">✦</span> Post
+                </button>
+                <button class="nav-btn" data-tab="status" id="navStatus">
+                    <span class="nav-icon">◆</span> Status
+                </button>
+                <button class="nav-btn" data-tab="peers" id="navPeers">
+                    <span class="nav-icon">⬡</span> Peers
+                </button>
+            </nav>
+        </header>
+
+        <!-- Timeline -->
+        <main class="panel active" id="panelTimeline">
+            <div class="panel-header">
+                <h1>Timeline</h1>
+                <div class="live-indicator" id="liveIndicator">
+                    <span class="live-dot"></span> LIVE
+                </div>
+            </div>
+            <div class="timeline" id="timeline">
+                <div class="timeline-empty" id="timelineEmpty">
+                    <span class="empty-icon">◇</span>
+                    <p>No messages yet</p>
+                    <p class="empty-sub">Messages will appear here as they arrive on the network</p>
+                </div>
+            </div>
+            <button class="load-more-btn" id="loadMoreBtn" style="display:none">Load earlier messages</button>
+        </main>
+
+        <!-- Compose -->
+        <section class="panel" id="panelCompose">
+            <div class="panel-header">
+                <h1>Broadcast</h1>
+            </div>
+            <div class="compose-area">
+                <div class="compose-card">
+                    <textarea
+                        id="composeInput"
+                        class="compose-input"
+                        placeholder="Type your message to the void…"
+                        maxlength="320"
+                        rows="4"
+                    ></textarea>
+                    <div class="compose-footer">
+                        <div class="char-count">
+                            <span id="charCount">0</span><span class="char-max">/320</span>
+                        </div>
+                        <button class="post-btn" id="postBtn">
+                            <span class="post-btn-text">Broadcast</span>
+                            <span class="post-btn-mining" style="display:none">⛏ Mining…</span>
+                        </button>
+                    </div>
+                </div>
+                <div class="post-result" id="postResult" style="display:none"></div>
+            </div>
+        </section>
+
+        <!-- Status -->
+        <section class="panel" id="panelStatus">
+            <div class="panel-header">
+                <h1>Node Status</h1>
+            </div>
+            <div class="status-grid" id="statusGrid">
+                <div class="stat-card">
+                    <div class="stat-label">Messages</div>
+                    <div class="stat-value" id="statMessages">—</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Peers</div>
+                    <div class="stat-value" id="statPeers">—</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Transport</div>
+                    <div class="stat-value" id="statTransport">—</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Version</div>
+                    <div class="stat-value" id="statVersion">—</div>
+                </div>
+                <div class="stat-card stat-wide">
+                    <div class="stat-label">Listen Address</div>
+                    <div class="stat-value stat-mono" id="statListen">—</div>
+                </div>
+                <div class="stat-card stat-wide">
+                    <div class="stat-label">Advertised Address</div>
+                    <div class="stat-value stat-mono" id="statAdvertise">—</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Peers -->
+        <section class="panel" id="panelPeers">
+            <div class="panel-header">
+                <h1>Network Peers</h1>
+                <div class="peer-count" id="peerCountBadge">0</div>
+            </div>
+            <div class="peer-list" id="peerList">
+                <div class="timeline-empty">
+                    <span class="empty-icon">⬡</span>
+                    <p>No peers discovered yet</p>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

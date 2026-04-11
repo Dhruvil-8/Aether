@@ -1,0 +1,62 @@
+services:
+  node_a:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    command: ["serve"]
+    environment:
+      AETHER_LISTEN_ADDR: "0.0.0.0:9000"
+      AETHER_ADVERTISE_ADDR: "node_a:9000"
+      AETHER_DATA_DIR: "/var/lib/aether"
+      AETHER_REQUIRE_TOR: "false"
+      AETHER_DEV_CLEARNET: "true"
+      AETHER_LOG_LEVEL: "info"
+    volumes:
+      - node_a_data:/var/lib/aether
+    ports:
+      - "9001:9000"
+
+  node_b:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    command: ["serve"]
+    environment:
+      AETHER_LISTEN_ADDR: "0.0.0.0:9000"
+      AETHER_ADVERTISE_ADDR: "node_b:9000"
+      AETHER_DATA_DIR: "/var/lib/aether"
+      AETHER_REQUIRE_TOR: "false"
+      AETHER_DEV_CLEARNET: "true"
+      AETHER_BOOTSTRAP_PEERS: "node_a:9000"
+      AETHER_LOG_LEVEL: "info"
+    volumes:
+      - node_b_data:/var/lib/aether
+    ports:
+      - "9002:9000"
+    depends_on:
+      - node_a
+
+  node_c:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    command: ["serve"]
+    environment:
+      AETHER_LISTEN_ADDR: "0.0.0.0:9000"
+      AETHER_ADVERTISE_ADDR: "node_c:9000"
+      AETHER_DATA_DIR: "/var/lib/aether"
+      AETHER_REQUIRE_TOR: "false"
+      AETHER_DEV_CLEARNET: "true"
+      AETHER_BOOTSTRAP_PEERS: "node_b:9000"
+      AETHER_LOG_LEVEL: "info"
+    volumes:
+      - node_c_data:/var/lib/aether
+    ports:
+      - "9003:9000"
+    depends_on:
+      - node_b
+
+volumes:
+  node_a_data:
+  node_b_data:
+  node_c_data:

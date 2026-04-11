@@ -1,0 +1,9 @@
+.git
+.aether
+tmp
+bin
+dist
+*.log
+*.tmp
+deploy
+scripts

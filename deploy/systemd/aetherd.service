@@ -1,0 +1,18 @@
+[Unit]
+Description=Aether node daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=aether
+Group=aether
+WorkingDirectory=/opt/aether
+EnvironmentFile=/etc/aether/aetherd.env
+ExecStart=/opt/aether/aetherd serve
+Restart=always
+RestartSec=5
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

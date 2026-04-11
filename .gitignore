@@ -1,0 +1,25 @@
+# Aether runtime data
+.aether/
+
+# Build output
+dist/
+*.exe
+
+# Temporary files
+tmp/
+*.tmp
+*.log
+
+# Test coverage
+coverage.out
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+Thumbs.db
+.DS_Store
