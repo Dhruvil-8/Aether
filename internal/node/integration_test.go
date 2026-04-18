@@ -815,6 +815,102 @@ func TestSyncFallsBackUsingAccumulatorDigestWhenOtherProofsMismatch(t *testing.T
 	}
 }
 
+func TestSyncFallsBackUsingChunkDigestWhenOtherProofsMismatch(t *testing.T) {
+	cfgA, storeA, cancelA := startTestServer(t)
+	defer cancelA()
+
+	var expected []*protocol.Message
+	for _, content := range []string{"chunk-one", "chunk-two", "chunk-three", "chunk-four", "chunk-five", "chunk-six"} {
+		msg := mustMineMessage(t, content)
+		expected = append(expected, msg)
+		if err := SendMessage(testClientConfig(), nil, cfgA.ListenAddress, msg); err != nil {
+			t.Fatalf("send failed: %v", err)
+		}
+	}
+	waitForMessages(t, storeA, 6)
+
+	rootB := filepath.Join(t.TempDir(), "chunk-fallback")
+	storeB, err := OpenStore(rootB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 4; i++ {
+		if err := storeB.Append(expected[i]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	meta, err := storeB.SyncMetadata(protocol.SyncMetaRequestPayload{
+		ChunkIndices: []int{1},
+		ChunkSize:    2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(meta.ChunkDigests) != 1 || meta.ChunkDigests[0].Hash == "" {
+		t.Fatal("expected local chunk digest for fallback test")
+	}
+
+	bookB, err := OpenPeerBook(rootB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := bookB.Merge(cfgA.ListenAddress); err != nil {
+		t.Fatal(err)
+	}
+	stateB, err := OpenSyncState(rootB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stateB.Set(cfgA.ListenAddress, SyncCursor{
+		Offset:      6,
+		LastHash:    "bad-hash",
+		Checkpoints: []protocol.SyncCheckpoint{{Offset: 2, Hash: "bad-hash"}},
+		Accumulators: []protocol.SyncAccumulatorDigest{
+			{Offset: 4, Hash: "bad-acc"},
+		},
+		WindowDigests: []protocol.SyncWindowDigest{
+			{EndOffset: 4, WindowSize: 2, Hash: "bad-window"},
+		},
+		ChunkDigests: []protocol.SyncChunkDigest{
+			meta.ChunkDigests[0],
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	cfgB := Config{
+		ListenAddress:   nextListenAddress(t),
+		DataDir:         rootB,
+		BootstrapPeers:  []string{cfgA.ListenAddress},
+		SyncBatchSize:   2,
+		SyncWindowSize:  2,
+		SyncChunkSize:   2,
+		DevClearnet:     true,
+		RequireTorProxy: false,
+	}
+	syncer := NewSyncer(cfgB, bookB, storeB, stateB)
+	seen := map[string]struct{}{
+		expected[0].H: {},
+		expected[1].H: {},
+		expected[2].H: {},
+		expected[3].H: {},
+	}
+	if err := syncer.SyncOnce(NewGossip(), seen); err != nil {
+		t.Fatalf("chunk fallback sync failed: %v", err)
+	}
+
+	got, err := storeB.LoadAll()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 6 {
+		t.Fatalf("unexpected synced count after chunk fallback: got %d want 6", len(got))
+	}
+	if got[4].H != expected[4].H || got[5].H != expected[5].H {
+		t.Fatal("expected sync to resume from matching chunk digest")
+	}
+}
+
 func TestSyncFallsBackToHealthyPeer(t *testing.T) {
 	deadAddr, liveAddr := nextOrderedListenAddresses(t)
 	cfgLive, storeLive, _, cancelLive := startManagedTestServer(t, Config{

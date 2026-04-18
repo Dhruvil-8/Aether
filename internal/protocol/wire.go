@@ -61,6 +61,8 @@ type SyncRequestPayload struct {
 type SyncMetaRequestPayload struct {
 	Offsets            []int `json:"offsets,omitempty"`
 	AccumulatorOffsets []int `json:"accumulator_offsets,omitempty"`
+	ChunkIndices       []int `json:"chunk_indices,omitempty"`
+	ChunkSize          int   `json:"chunk_size,omitempty"`
 	WindowEnds         []int `json:"window_ends,omitempty"`
 	WindowSize         int   `json:"window_size,omitempty"`
 }
@@ -81,12 +83,29 @@ type SyncAccumulatorDigest struct {
 	Hash   string `json:"hash,omitempty"`
 }
 
+type SyncChunkDigest struct {
+	Index       int    `json:"index"`
+	StartOffset int    `json:"start_offset"`
+	EndOffset   int    `json:"end_offset"`
+	Hash        string `json:"hash,omitempty"`
+}
+
+type SyncChunkProof struct {
+	Index    int      `json:"index"`
+	LeafHash string   `json:"leaf_hash,omitempty"`
+	Siblings []string `json:"siblings,omitempty"`
+}
+
 type SyncMetaPayload struct {
-	TotalMessages int                     `json:"total_messages"`
-	TipHash       string                  `json:"tip_hash,omitempty"`
-	Checkpoints   []SyncCheckpoint        `json:"checkpoints,omitempty"`
-	Accumulators  []SyncAccumulatorDigest `json:"accumulators,omitempty"`
-	WindowDigests []SyncWindowDigest      `json:"window_digests,omitempty"`
+	TotalMessages     int                     `json:"total_messages"`
+	TipHash           string                  `json:"tip_hash,omitempty"`
+	Checkpoints       []SyncCheckpoint        `json:"checkpoints,omitempty"`
+	Accumulators      []SyncAccumulatorDigest `json:"accumulators,omitempty"`
+	ChunkDigests      []SyncChunkDigest       `json:"chunk_digests,omitempty"`
+	ChunkMerkleRoot   string                  `json:"chunk_merkle_root,omitempty"`
+	ChunkMerkleLeaves int                     `json:"chunk_merkle_leaves,omitempty"`
+	ChunkMerkleProofs []SyncChunkProof        `json:"chunk_merkle_proofs,omitempty"`
+	WindowDigests     []SyncWindowDigest      `json:"window_digests,omitempty"`
 }
 
 type SyncDataPayload struct {

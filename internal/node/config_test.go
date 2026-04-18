@@ -73,12 +73,18 @@ func TestDefaultConfigSyncResponseFallback(t *testing.T) {
 
 func TestDefaultConfigSyncMetadataFallbacks(t *testing.T) {
 	originalWindow := os.Getenv("AETHER_SYNC_WINDOW_SIZE")
+	originalChunk := os.Getenv("AETHER_SYNC_CHUNK_SIZE")
 	originalMetaOffsets := os.Getenv("AETHER_MAX_SYNC_META_OFFSETS")
 	t.Cleanup(func() {
 		if originalWindow == "" {
 			_ = os.Unsetenv("AETHER_SYNC_WINDOW_SIZE")
 		} else {
 			_ = os.Setenv("AETHER_SYNC_WINDOW_SIZE", originalWindow)
+		}
+		if originalChunk == "" {
+			_ = os.Unsetenv("AETHER_SYNC_CHUNK_SIZE")
+		} else {
+			_ = os.Setenv("AETHER_SYNC_CHUNK_SIZE", originalChunk)
 		}
 		if originalMetaOffsets == "" {
 			_ = os.Unsetenv("AETHER_MAX_SYNC_META_OFFSETS")
@@ -88,10 +94,14 @@ func TestDefaultConfigSyncMetadataFallbacks(t *testing.T) {
 	})
 
 	_ = os.Setenv("AETHER_SYNC_WINDOW_SIZE", "0")
+	_ = os.Setenv("AETHER_SYNC_CHUNK_SIZE", "0")
 	_ = os.Setenv("AETHER_MAX_SYNC_META_OFFSETS", "0")
 	cfg := DefaultConfig()
 	if cfg.SyncWindowSize != 32 {
 		t.Fatalf("unexpected sync window fallback: %d", cfg.SyncWindowSize)
+	}
+	if cfg.SyncChunkSize != 256 {
+		t.Fatalf("unexpected sync chunk fallback: %d", cfg.SyncChunkSize)
 	}
 	if cfg.MaxSyncMetaOffsets != 128 {
 		t.Fatalf("unexpected sync meta offset fallback: %d", cfg.MaxSyncMetaOffsets)
@@ -154,12 +164,36 @@ func TestDefaultConfigConnectionAndControlFallbacks(t *testing.T) {
 
 func TestDefaultConfigPayloadAndIdleFallbacks(t *testing.T) {
 	originalPayload := os.Getenv("AETHER_MAX_JSON_PAYLOAD_BYTES")
+	originalConnBytes := os.Getenv("AETHER_MAX_CONN_BYTES")
+	originalGlobalRead := os.Getenv("AETHER_MAX_GLOBAL_READ_PER_SEC")
+	originalFramesPerConn := os.Getenv("AETHER_MAX_FRAMES_PER_CONN")
+	originalSyncResponseBytes := os.Getenv("AETHER_MAX_SYNC_RESPONSE_BYTES")
 	originalIdle := os.Getenv("AETHER_CONN_IDLE_TIMEOUT_SEC")
 	t.Cleanup(func() {
 		if originalPayload == "" {
 			_ = os.Unsetenv("AETHER_MAX_JSON_PAYLOAD_BYTES")
 		} else {
 			_ = os.Setenv("AETHER_MAX_JSON_PAYLOAD_BYTES", originalPayload)
+		}
+		if originalConnBytes == "" {
+			_ = os.Unsetenv("AETHER_MAX_CONN_BYTES")
+		} else {
+			_ = os.Setenv("AETHER_MAX_CONN_BYTES", originalConnBytes)
+		}
+		if originalGlobalRead == "" {
+			_ = os.Unsetenv("AETHER_MAX_GLOBAL_READ_PER_SEC")
+		} else {
+			_ = os.Setenv("AETHER_MAX_GLOBAL_READ_PER_SEC", originalGlobalRead)
+		}
+		if originalFramesPerConn == "" {
+			_ = os.Unsetenv("AETHER_MAX_FRAMES_PER_CONN")
+		} else {
+			_ = os.Setenv("AETHER_MAX_FRAMES_PER_CONN", originalFramesPerConn)
+		}
+		if originalSyncResponseBytes == "" {
+			_ = os.Unsetenv("AETHER_MAX_SYNC_RESPONSE_BYTES")
+		} else {
+			_ = os.Setenv("AETHER_MAX_SYNC_RESPONSE_BYTES", originalSyncResponseBytes)
 		}
 		if originalIdle == "" {
 			_ = os.Unsetenv("AETHER_CONN_IDLE_TIMEOUT_SEC")
@@ -169,10 +203,26 @@ func TestDefaultConfigPayloadAndIdleFallbacks(t *testing.T) {
 	})
 
 	_ = os.Setenv("AETHER_MAX_JSON_PAYLOAD_BYTES", "0")
+	_ = os.Setenv("AETHER_MAX_CONN_BYTES", "0")
+	_ = os.Setenv("AETHER_MAX_GLOBAL_READ_PER_SEC", "0")
+	_ = os.Setenv("AETHER_MAX_FRAMES_PER_CONN", "0")
+	_ = os.Setenv("AETHER_MAX_SYNC_RESPONSE_BYTES", "0")
 	_ = os.Setenv("AETHER_CONN_IDLE_TIMEOUT_SEC", "0")
 	cfg := DefaultConfig()
 	if cfg.MaxJSONPayloadBytes != 1024*1024 {
 		t.Fatalf("unexpected max json payload fallback: %d", cfg.MaxJSONPayloadBytes)
+	}
+	if cfg.MaxConnBytes != 8*1024*1024 {
+		t.Fatalf("unexpected max conn bytes fallback: %d", cfg.MaxConnBytes)
+	}
+	if cfg.MaxGlobalReadPerSec != 32*1024*1024 {
+		t.Fatalf("unexpected global read fallback: %d", cfg.MaxGlobalReadPerSec)
+	}
+	if cfg.MaxFramesPerConn != 4000 {
+		t.Fatalf("unexpected max frames per conn fallback: %d", cfg.MaxFramesPerConn)
+	}
+	if cfg.MaxSyncResponseBytes != 2*1024*1024 {
+		t.Fatalf("unexpected max sync response bytes fallback: %d", cfg.MaxSyncResponseBytes)
 	}
 	if cfg.ConnectionIdleTimeout != 90*time.Second {
 		t.Fatalf("unexpected connection idle timeout fallback: %s", cfg.ConnectionIdleTimeout)

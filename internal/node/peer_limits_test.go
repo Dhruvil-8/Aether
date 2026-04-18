@@ -130,6 +130,64 @@ func TestSendSyncNonArchiveServesRecentWindowOnly(t *testing.T) {
 	}
 }
 
+func TestSendSyncMetaIncludesChunkDigestsAndClampsRequests(t *testing.T) {
+	root := t.TempDir()
+	store, err := OpenStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, content := range []string{"one", "two", "three", "four"} {
+		msg := mustMineMessage(t, content)
+		if err := store.Append(msg); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	server := NewPeerServer(Config{
+		MaxSyncMetaOffsets: 1,
+		SyncChunkSize:      2,
+	}, store, nil)
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+
+	errCh := make(chan error, 1)
+	go func() {
+		defer serverConn.Close()
+		req, err := protocol.EncodeJSON(protocol.SyncMetaRequestPayload{
+			ChunkIndices: []int{0, 1},
+			ChunkSize:    2,
+		})
+		if err != nil {
+			errCh <- err
+			return
+		}
+		errCh <- server.sendSyncMeta(serverConn, req)
+	}()
+
+	frame, err := protocol.ReadFrame(clientConn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if frame.Type != protocol.FrameSyncMeta {
+		t.Fatalf("unexpected frame type: %d", frame.Type)
+	}
+
+	var payload protocol.SyncMetaPayload
+	if err := protocol.DecodeJSON(frame.Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.ChunkDigests) != 1 {
+		t.Fatalf("unexpected chunk digest count after clamp: got %d want 1", len(payload.ChunkDigests))
+	}
+	if payload.ChunkDigests[0].Hash == "" {
+		t.Fatal("expected chunk digest hash to be populated")
+	}
+
+	if err := <-errCh; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestLimitPeersDeduplicatesAndCaps(t *testing.T) {
 	peers := []string{
 		" alpha:1 ",
@@ -404,6 +462,148 @@ func TestOversizedJSONPayloadDisconnectsPeer(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatal("expected peer to be backed off after oversized JSON payload")
+}
+
+func TestConnectionReadBudgetDisconnectsPeer(t *testing.T) {
+	cfg := Config{
+		ListenAddress:       nextListenAddress(t),
+		DataDir:             filepath.Join(t.TempDir(), "conn-read-budget"),
+		MaxConnBytes:        64,
+		MaxFramesPerConn:    100,
+		MaxGlobalReadPerSec: 1024,
+		MaxControlPerSec:    1000,
+		PeerBackoff:         time.Second,
+		DevClearnet:         true,
+		RequireTorProxy:     false,
+	}
+
+	store, err := OpenStore(cfg.DataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	book, err := OpenPeerBook(cfg.DataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := NewPeerServer(cfg, store, book)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		_ = server.Listen(ctx)
+	}()
+	waitForListening(t, cfg.ListenAddress)
+
+	clientConn, err := net.Dial("tcp", cfg.ListenAddress)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clientConn.Close()
+
+	if _, err := clientHandshake(clientConn, Config{
+		AdvertiseAddr:   "remote-budget:1",
+		DevClearnet:     true,
+		RequireTorProxy: false,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	closed := false
+	for i := 0; i < 20; i++ {
+		if err := protocol.WriteFrame(clientConn, protocol.FramePing, nil); err != nil {
+			closed = true
+			break
+		}
+		_ = clientConn.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+		_, err := protocol.ReadFrame(clientConn)
+		_ = clientConn.SetReadDeadline(time.Time{})
+		if err != nil {
+			closed = true
+			break
+		}
+	}
+	if !closed {
+		t.Fatal("expected disconnect once per-connection read budget is exceeded")
+	}
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if book.IsBackedOff("remote-budget:1", time.Now()) {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("expected peer to be backed off after connection read budget abuse")
+}
+
+func TestGlobalReadBudgetDisconnectsPeer(t *testing.T) {
+	cfg := Config{
+		ListenAddress:       nextListenAddress(t),
+		DataDir:             filepath.Join(t.TempDir(), "global-read-budget"),
+		MaxConnBytes:        1024 * 1024,
+		MaxFramesPerConn:    100,
+		MaxGlobalReadPerSec: 20,
+		MaxControlPerSec:    1000,
+		PeerBackoff:         time.Second,
+		DevClearnet:         true,
+		RequireTorProxy:     false,
+	}
+
+	store, err := OpenStore(cfg.DataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	book, err := OpenPeerBook(cfg.DataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := NewPeerServer(cfg, store, book)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		_ = server.Listen(ctx)
+	}()
+	waitForListening(t, cfg.ListenAddress)
+
+	clientConn, err := net.Dial("tcp", cfg.ListenAddress)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clientConn.Close()
+
+	if _, err := clientHandshake(clientConn, Config{
+		AdvertiseAddr:   "remote-global:1",
+		DevClearnet:     true,
+		RequireTorProxy: false,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	closed := false
+	for i := 0; i < 10; i++ {
+		if err := protocol.WriteFrame(clientConn, protocol.FramePing, nil); err != nil {
+			closed = true
+			break
+		}
+		_ = clientConn.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+		_, err := protocol.ReadFrame(clientConn)
+		_ = clientConn.SetReadDeadline(time.Time{})
+		if err != nil {
+			closed = true
+			break
+		}
+	}
+	if !closed {
+		t.Fatal("expected disconnect once global read budget is exceeded")
+	}
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if book.IsBackedOff("remote-global:1", time.Now()) {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("expected peer to be backed off after global read budget abuse")
 }
 
 func isPipeClosed(err error) bool {

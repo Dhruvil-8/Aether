@@ -1,10 +1,12 @@
 package node
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"aether/internal/protocol"
@@ -39,7 +41,7 @@ func (s *Syncer) SyncOnce(gossip *Gossip, seen map[string]struct{}) error {
 			lastErr = err
 			continue
 		}
-		metaReq := buildSyncMetaRequest(cursor, syncWindowSize(s.cfg))
+		metaReq := buildSyncMetaRequestForConfig(s.cfg, cursor)
 		meta, err := fetchSyncMeta(s.cfg, peer, metaReq)
 		if err != nil {
 			markFailure(s.book, peer, s.cfg)
@@ -82,7 +84,7 @@ func (s *Syncer) SyncOnce(gossip *Gossip, seen map[string]struct{}) error {
 			}
 			if len(data.Messages) == 0 {
 				cursor.Offset = nextOffset
-				cursor = s.hydrateCursorWindowDigests(cursor)
+				cursor = s.hydrateCursorMetadata(cursor)
 				if err := s.setCursor(peer, cursor); err != nil {
 					markFailure(s.book, peer, s.cfg)
 					Metrics().IncSyncFailure()
@@ -132,7 +134,7 @@ func (s *Syncer) SyncOnce(gossip *Gossip, seen map[string]struct{}) error {
 			}
 			Metrics().IncSyncBatch(applied)
 			cursor.Offset = nextOffset
-			cursor = s.hydrateCursorWindowDigests(cursor)
+			cursor = s.hydrateCursorMetadata(cursor)
 			if err := s.setCursor(peer, cursor); err != nil {
 				markFailure(s.book, peer, s.cfg)
 				Metrics().IncSyncFailure()
@@ -260,13 +262,14 @@ func checkpointOffsets(cursor SyncCursor) []int {
 	return offsets
 }
 
-func buildSyncMetaRequest(cursor SyncCursor, windowSize int) protocol.SyncMetaRequestPayload {
-	if windowSize <= 0 {
-		windowSize = 32
-	}
+func buildSyncMetaRequestForConfig(cfg Config, cursor SyncCursor) protocol.SyncMetaRequestPayload {
+	windowSize := syncWindowSize(cfg)
+	chunkSize := syncChunkSize(cfg)
 	return protocol.SyncMetaRequestPayload{
 		Offsets:            checkpointOffsets(cursor),
 		AccumulatorOffsets: accumulatorOffsets(cursor),
+		ChunkIndices:       chunkIndices(cursor, chunkSize),
+		ChunkSize:          chunkSize,
 		WindowEnds:         windowDigestEnds(cursor),
 		WindowSize:         windowSize,
 	}
@@ -316,6 +319,35 @@ func windowDigestEnds(cursor SyncCursor) []int {
 	return out
 }
 
+func chunkIndices(cursor SyncCursor, chunkSize int) []int {
+	if chunkSize <= 0 {
+		chunkSize = 256
+	}
+	seen := make(map[int]struct{}, len(cursor.ChunkDigests)+1)
+	out := make([]int, 0, len(cursor.ChunkDigests)+1)
+	for _, digest := range cursor.ChunkDigests {
+		if digest.Index < 0 {
+			continue
+		}
+		if _, ok := seen[digest.Index]; ok {
+			continue
+		}
+		seen[digest.Index] = struct{}{}
+		out = append(out, digest.Index)
+	}
+	if cursor.Offset > 0 {
+		idx := (cursor.Offset - 1) / chunkSize
+		if idx < 0 {
+			idx = 0
+		}
+		if _, ok := seen[idx]; !ok {
+			out = append(out, idx)
+		}
+	}
+	sort.Ints(out)
+	return out
+}
+
 func normalizeCursor(cursor SyncCursor, meta *protocol.SyncMetaPayload) SyncCursor {
 	if cursor.Offset < 0 {
 		cursor.Offset = 0
@@ -328,6 +360,13 @@ func normalizeCursor(cursor SyncCursor, meta *protocol.SyncMetaPayload) SyncCurs
 	}
 	if cursor.Offset == 0 {
 		cursor.Accumulators = filterValidAccumulators(cursor.Accumulators, meta.Accumulators)
+		cursor.ChunkDigests = filterValidChunkDigests(
+			cursor.ChunkDigests,
+			meta.ChunkDigests,
+			meta.ChunkMerkleProofs,
+			meta.ChunkMerkleRoot,
+			meta.ChunkMerkleLeaves,
+		)
 		cursor.WindowDigests = filterValidWindowDigests(cursor.WindowDigests, meta.WindowDigests)
 		return cursor
 	}
@@ -338,6 +377,13 @@ func normalizeCursor(cursor SyncCursor, meta *protocol.SyncMetaPayload) SyncCurs
 	if hash, ok := metaHashes[cursor.Offset]; ok && hash != "" && hash == cursor.LastHash {
 		cursor.Checkpoints = filterValidCheckpoints(cursor.Checkpoints, metaHashes)
 		cursor.Accumulators = filterValidAccumulators(cursor.Accumulators, meta.Accumulators)
+		cursor.ChunkDigests = filterValidChunkDigests(
+			cursor.ChunkDigests,
+			meta.ChunkDigests,
+			meta.ChunkMerkleProofs,
+			meta.ChunkMerkleRoot,
+			meta.ChunkMerkleLeaves,
+		)
 		cursor.WindowDigests = filterValidWindowDigests(cursor.WindowDigests, meta.WindowDigests)
 		return cursor
 	}
@@ -346,6 +392,16 @@ func normalizeCursor(cursor SyncCursor, meta *protocol.SyncMetaPayload) SyncCurs
 	bestAccumulatorOffset := bestMatchingAccumulatorOffset(cursor.Accumulators, meta.Accumulators)
 	if bestAccumulatorOffset > best.Offset {
 		best.Offset = bestAccumulatorOffset
+	}
+	bestChunkOffset := bestMatchingChunkOffset(
+		cursor.ChunkDigests,
+		meta.ChunkDigests,
+		meta.ChunkMerkleProofs,
+		meta.ChunkMerkleRoot,
+		meta.ChunkMerkleLeaves,
+	)
+	if bestChunkOffset > best.Offset {
+		best.Offset = bestChunkOffset
 	}
 	bestWindowOffset := bestMatchingWindowOffset(cursor.WindowDigests, meta.WindowDigests)
 	if bestWindowOffset > best.Offset {
@@ -363,6 +419,13 @@ func normalizeCursor(cursor SyncCursor, meta *protocol.SyncMetaPayload) SyncCurs
 	}
 	best.Checkpoints = filterValidCheckpoints(cursor.Checkpoints, metaHashes)
 	best.Accumulators = filterValidAccumulators(cursor.Accumulators, meta.Accumulators)
+	best.ChunkDigests = filterValidChunkDigests(
+		cursor.ChunkDigests,
+		meta.ChunkDigests,
+		meta.ChunkMerkleProofs,
+		meta.ChunkMerkleRoot,
+		meta.ChunkMerkleLeaves,
+	)
 	best.WindowDigests = filterValidWindowDigests(cursor.WindowDigests, meta.WindowDigests)
 	return best
 }
@@ -387,6 +450,14 @@ func syncWindowSize(cfg Config) int {
 	size := cfg.SyncWindowSize
 	if size <= 0 {
 		return 32
+	}
+	return size
+}
+
+func syncChunkSize(cfg Config) int {
+	size := cfg.SyncChunkSize
+	if size <= 0 {
+		return 256
 	}
 	return size
 }
@@ -537,6 +608,128 @@ func filterValidAccumulators(existing, remote []protocol.SyncAccumulatorDigest) 
 	return append([]protocol.SyncAccumulatorDigest(nil), out[len(out)-limit:]...)
 }
 
+func bestMatchingChunkOffset(
+	cursorDigests []protocol.SyncChunkDigest,
+	remoteDigests []protocol.SyncChunkDigest,
+	remoteProofs []protocol.SyncChunkProof,
+	merkleRoot string,
+	merkleLeaves int,
+) int {
+	remote := validatedRemoteChunkDigests(remoteDigests, remoteProofs, merkleRoot, merkleLeaves)
+
+	best := 0
+	for _, digest := range cursorDigests {
+		if digest.Index < 0 || digest.Hash == "" || digest.EndOffset <= 0 {
+			continue
+		}
+		remoteDigest, ok := remote[digest.Index]
+		if !ok {
+			continue
+		}
+		if remoteDigest.Hash == digest.Hash && digest.EndOffset > best {
+			best = digest.EndOffset
+		}
+	}
+	return best
+}
+
+func filterValidChunkDigests(
+	existing []protocol.SyncChunkDigest,
+	remote []protocol.SyncChunkDigest,
+	remoteProofs []protocol.SyncChunkProof,
+	merkleRoot string,
+	merkleLeaves int,
+) []protocol.SyncChunkDigest {
+	remoteMap := validatedRemoteChunkDigests(remote, remoteProofs, merkleRoot, merkleLeaves)
+
+	out := make([]protocol.SyncChunkDigest, 0, len(existing))
+	for _, digest := range existing {
+		if digest.Index < 0 || digest.Hash == "" {
+			continue
+		}
+		remoteDigest, ok := remoteMap[digest.Index]
+		if !ok {
+			continue
+		}
+		if remoteDigest.Hash != digest.Hash {
+			continue
+		}
+		out = append(out, digest)
+	}
+
+	const limit = 12
+	if len(out) <= limit {
+		return out
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].EndOffset < out[j].EndOffset
+	})
+	return append([]protocol.SyncChunkDigest(nil), out[len(out)-limit:]...)
+}
+
+func validatedRemoteChunkDigests(
+	remoteDigests []protocol.SyncChunkDigest,
+	remoteProofs []protocol.SyncChunkProof,
+	merkleRoot string,
+	merkleLeaves int,
+) map[int]protocol.SyncChunkDigest {
+	remote := make(map[int]protocol.SyncChunkDigest, len(remoteDigests))
+	for _, digest := range remoteDigests {
+		remote[digest.Index] = digest
+	}
+	// Backward compatibility for peers that do not provide merkle proofs yet.
+	if strings.TrimSpace(merkleRoot) == "" || merkleLeaves <= 0 || len(remoteProofs) == 0 {
+		return remote
+	}
+
+	proofMap := make(map[int]protocol.SyncChunkProof, len(remoteProofs))
+	for _, proof := range remoteProofs {
+		proofMap[proof.Index] = proof
+	}
+
+	valid := make(map[int]protocol.SyncChunkDigest, len(remote))
+	for idx, digest := range remote {
+		if digest.Hash == "" {
+			continue
+		}
+		proof, ok := proofMap[idx]
+		if !ok {
+			continue
+		}
+		if proof.LeafHash != digest.Hash {
+			continue
+		}
+		if !verifyChunkMerkleProof(proof, merkleRoot, merkleLeaves) {
+			continue
+		}
+		valid[idx] = digest
+	}
+	return valid
+}
+
+func verifyChunkMerkleProof(proof protocol.SyncChunkProof, merkleRoot string, merkleLeaves int) bool {
+	if proof.Index < 0 || merkleLeaves <= 0 || proof.Index >= merkleLeaves {
+		return false
+	}
+	if proof.LeafHash == "" || strings.TrimSpace(merkleRoot) == "" {
+		return false
+	}
+
+	current := decodeOrHashDigest(proof.LeafHash)
+	index := proof.Index
+	for _, siblingHex := range proof.Siblings {
+		sibling := decodeOrHashDigest(siblingHex)
+		if index%2 == 0 {
+			current = hashPair(current, sibling)
+		} else {
+			current = hashPair(sibling, current)
+		}
+		index /= 2
+	}
+	want := decodeOrHashDigest(merkleRoot)
+	return bytes.Equal(current, want)
+}
+
 func bestMatchingWindowOffset(cursorDigests, remoteDigests []protocol.SyncWindowDigest) int {
 	remote := make(map[string]string, len(remoteDigests))
 	for _, digest := range remoteDigests {
@@ -587,12 +780,19 @@ func windowDigestKey(endOffset, windowSize int) string {
 	return strconv.Itoa(endOffset) + ":" + strconv.Itoa(windowSize)
 }
 
-func (s *Syncer) hydrateCursorWindowDigests(cursor SyncCursor) SyncCursor {
+func (s *Syncer) hydrateCursorMetadata(cursor SyncCursor) SyncCursor {
 	if cursor.Offset <= 0 {
 		return cursor
 	}
+	chunkSize := syncChunkSize(s.cfg)
+	chunkIndex := (cursor.Offset - 1) / chunkSize
+	if chunkIndex < 0 {
+		chunkIndex = 0
+	}
 	meta, err := s.store.SyncMetadata(protocol.SyncMetaRequestPayload{
 		AccumulatorOffsets: []int{cursor.Offset},
+		ChunkIndices:       []int{chunkIndex},
+		ChunkSize:          chunkSize,
 		WindowEnds:         []int{cursor.Offset},
 		WindowSize:         syncWindowSize(s.cfg),
 	})
@@ -624,6 +824,31 @@ func (s *Syncer) hydrateCursorWindowDigests(cursor SyncCursor) SyncCursor {
 		accOut = accOut[len(accOut)-12:]
 	}
 	cursor.Accumulators = accOut
+
+	chunkMap := make(map[int]protocol.SyncChunkDigest, len(cursor.ChunkDigests)+len(meta.ChunkDigests))
+	for _, digest := range cursor.ChunkDigests {
+		if digest.Index < 0 || digest.Hash == "" {
+			continue
+		}
+		chunkMap[digest.Index] = digest
+	}
+	for _, digest := range meta.ChunkDigests {
+		if digest.Index < 0 || digest.Hash == "" {
+			continue
+		}
+		chunkMap[digest.Index] = digest
+	}
+	chunkOut := make([]protocol.SyncChunkDigest, 0, len(chunkMap))
+	for _, digest := range chunkMap {
+		chunkOut = append(chunkOut, digest)
+	}
+	sort.Slice(chunkOut, func(i, j int) bool {
+		return chunkOut[i].EndOffset < chunkOut[j].EndOffset
+	})
+	if len(chunkOut) > 12 {
+		chunkOut = chunkOut[len(chunkOut)-12:]
+	}
+	cursor.ChunkDigests = chunkOut
 
 	existing := make(map[string]protocol.SyncWindowDigest, len(cursor.WindowDigests)+len(meta.WindowDigests))
 	for _, digest := range cursor.WindowDigests {

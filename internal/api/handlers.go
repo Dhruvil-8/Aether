@@ -102,6 +102,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	m := node.Metrics()
+	snapshot := m.Snapshot()
 
 	resp := StatusResponse{
 		MessageCount:     len(messages),
@@ -113,7 +114,17 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		AdvertiseAddress: s.cfg.AdvertiseAddr,
 		NodeVersion:      protocol.NodeVersion,
 		Metrics: MetricsSnapshot{
-			MessagesAccepted: m.RenderPrometheus(),
+			MessagesAccepted:  snapshot.MessagesAccepted,
+			MessagesRelayed:   snapshot.MessagesRelayed,
+			SyncBatches:       snapshot.SyncBatches,
+			SyncMessages:      snapshot.SyncMessages,
+			SyncFailures:      snapshot.SyncFailures,
+			PeerDialFailures:  snapshot.PeerDialFailures,
+			PeerAbuseEvents:   snapshot.PeerAbuseEvents,
+			TorRecoveries:     snapshot.TorRecoveries,
+			ConnectionRejects: snapshot.ConnectionRejects,
+			ResourceRejects:   snapshot.ResourceRejects,
+			OpenConnections:   snapshot.OpenConnections,
 		},
 	}
 
@@ -141,9 +152,9 @@ func (s *Server) handlePeers(w http.ResponseWriter, r *http.Request) {
 	views := make([]PeerView, 0, len(peers))
 	for _, addr := range peers {
 		view := PeerView{
-			Address:  addr,
-			Score:    s.peers.PenaltyScoreAt(addr, now),
-			Banned:   s.peers.IsBanned(addr, now),
+			Address:   addr,
+			Score:     s.peers.PenaltyScoreAt(addr, now),
+			Banned:    s.peers.IsBanned(addr, now),
 			BackedOff: s.peers.IsBackedOff(addr, now),
 		}
 		views = append(views, view)
@@ -190,7 +201,17 @@ type StatusResponse struct {
 }
 
 type MetricsSnapshot struct {
-	MessagesAccepted string `json:"raw"`
+	MessagesAccepted  uint64 `json:"messages_accepted"`
+	MessagesRelayed   uint64 `json:"messages_relayed"`
+	SyncBatches       uint64 `json:"sync_batches"`
+	SyncMessages      uint64 `json:"sync_messages"`
+	SyncFailures      uint64 `json:"sync_failures"`
+	PeerDialFailures  uint64 `json:"peer_dial_failures"`
+	PeerAbuseEvents   uint64 `json:"peer_abuse_events"`
+	TorRecoveries     uint64 `json:"tor_recoveries"`
+	ConnectionRejects uint64 `json:"connection_rejects"`
+	ResourceRejects   uint64 `json:"resource_rejects"`
+	OpenConnections   int64  `json:"open_connections"`
 }
 
 type PeerView struct {

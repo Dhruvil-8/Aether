@@ -14,6 +14,7 @@ type SyncCursor struct {
 	LastHash      string                           `json:"last_hash,omitempty"`
 	Checkpoints   []protocol.SyncCheckpoint        `json:"checkpoints,omitempty"`
 	Accumulators  []protocol.SyncAccumulatorDigest `json:"accumulators,omitempty"`
+	ChunkDigests  []protocol.SyncChunkDigest       `json:"chunk_digests,omitempty"`
 	WindowDigests []protocol.SyncWindowDigest      `json:"window_digests,omitempty"`
 }
 

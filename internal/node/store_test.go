@@ -59,6 +59,8 @@ func TestStoreSyncMetadataIncludesWindowDigestsAndTip(t *testing.T) {
 	meta, err := store.SyncMetadata(protocol.SyncMetaRequestPayload{
 		Offsets:            []int{2, 4},
 		AccumulatorOffsets: []int{2, 4},
+		ChunkIndices:       []int{0, 1},
+		ChunkSize:          2,
 		WindowEnds:         []int{4},
 		WindowSize:         2,
 	})
@@ -77,8 +79,34 @@ func TestStoreSyncMetadataIncludesWindowDigestsAndTip(t *testing.T) {
 	if len(meta.Accumulators) != 2 {
 		t.Fatalf("unexpected accumulator digest count: got %d want 2", len(meta.Accumulators))
 	}
+	if len(meta.ChunkDigests) != 2 {
+		t.Fatalf("unexpected chunk digest count: got %d want 2", len(meta.ChunkDigests))
+	}
+	if meta.ChunkMerkleRoot == "" {
+		t.Fatal("expected chunk merkle root")
+	}
+	if meta.ChunkMerkleLeaves != 2 {
+		t.Fatalf("unexpected chunk merkle leaves: got %d want 2", meta.ChunkMerkleLeaves)
+	}
+	if len(meta.ChunkMerkleProofs) != 2 {
+		t.Fatalf("unexpected chunk merkle proofs count: got %d want 2", len(meta.ChunkMerkleProofs))
+	}
 	if meta.Accumulators[0].Offset != 2 || meta.Accumulators[1].Offset != 4 {
 		t.Fatalf("unexpected accumulator offsets: %+v", meta.Accumulators)
+	}
+	if meta.ChunkDigests[0].Index != 0 || meta.ChunkDigests[0].StartOffset != 1 || meta.ChunkDigests[0].EndOffset != 2 {
+		t.Fatalf("unexpected first chunk digest metadata: %+v", meta.ChunkDigests[0])
+	}
+	if meta.ChunkDigests[1].Index != 1 || meta.ChunkDigests[1].StartOffset != 3 || meta.ChunkDigests[1].EndOffset != 4 {
+		t.Fatalf("unexpected second chunk digest metadata: %+v", meta.ChunkDigests[1])
+	}
+	if meta.ChunkDigests[0].Hash == "" || meta.ChunkDigests[1].Hash == "" {
+		t.Fatalf("expected chunk hashes to be populated: %+v", meta.ChunkDigests)
+	}
+	for _, proof := range meta.ChunkMerkleProofs {
+		if !verifyChunkMerkleProof(proof, meta.ChunkMerkleRoot, meta.ChunkMerkleLeaves) {
+			t.Fatalf("expected valid chunk merkle proof: %+v", proof)
+		}
 	}
 	if meta.Accumulators[0].Hash == "" || meta.Accumulators[1].Hash == "" {
 		t.Fatalf("expected accumulator hashes to be populated: %+v", meta.Accumulators)

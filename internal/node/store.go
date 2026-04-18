@@ -147,6 +147,13 @@ func (s *Store) SyncMetadata(req protocol.SyncMetaRequestPayload) (*protocol.Syn
 	})
 
 	accumulators := computeAccumulatorDigests(messages, req.AccumulatorOffsets)
+	chunkSize := req.ChunkSize
+	if chunkSize <= 0 {
+		chunkSize = 256
+	}
+	chunks := computeChunkDigests(messages, req.ChunkIndices, chunkSize)
+	chunkRoot, chunkLeaves := computeChunkMerkleRoot(messages, chunkSize)
+	chunkProofs := computeChunkMerkleProofs(messages, req.ChunkIndices, chunkSize)
 
 	windowDigests := make([]protocol.SyncWindowDigest, 0, len(req.WindowEnds))
 	windowSize := req.WindowSize
@@ -182,11 +189,15 @@ func (s *Store) SyncMetadata(req protocol.SyncMetaRequestPayload) (*protocol.Syn
 	}
 
 	return &protocol.SyncMetaPayload{
-		TotalMessages: len(messages),
-		TipHash:       tipHash,
-		Checkpoints:   checkpoints,
-		Accumulators:  accumulators,
-		WindowDigests: windowDigests,
+		TotalMessages:     len(messages),
+		TipHash:           tipHash,
+		Checkpoints:       checkpoints,
+		Accumulators:      accumulators,
+		ChunkDigests:      chunks,
+		ChunkMerkleRoot:   chunkRoot,
+		ChunkMerkleLeaves: chunkLeaves,
+		ChunkMerkleProofs: chunkProofs,
+		WindowDigests:     windowDigests,
 	}, nil
 }
 
@@ -235,6 +246,210 @@ func computeAccumulatorDigests(messages []protocol.Message, offsets []int) []pro
 		return out[i].Offset < out[j].Offset
 	})
 	return out
+}
+
+func computeChunkDigests(messages []protocol.Message, indices []int, chunkSize int) []protocol.SyncChunkDigest {
+	if len(indices) == 0 {
+		return nil
+	}
+	if chunkSize <= 0 {
+		chunkSize = 256
+	}
+
+	target := make(map[int]struct{}, len(indices))
+	for _, idx := range indices {
+		if idx >= 0 {
+			target[idx] = struct{}{}
+		}
+	}
+	if len(target) == 0 {
+		return nil
+	}
+
+	out := make([]protocol.SyncChunkDigest, 0, len(target))
+	for idx := range target {
+		start := idx*chunkSize + 1
+		end := (idx + 1) * chunkSize
+		if end > len(messages) {
+			end = len(messages)
+		}
+
+		digest := protocol.SyncChunkDigest{
+			Index:       idx,
+			StartOffset: start,
+			EndOffset:   end,
+		}
+		if start <= len(messages) && start > 0 && start <= end {
+			digest.Hash = computeRangeDigest(messages, start, end)
+		}
+		out = append(out, digest)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].Index < out[j].Index
+	})
+	return out
+}
+
+func computeChunkMerkleRoot(messages []protocol.Message, chunkSize int) (string, int) {
+	leafHashes := computeChunkLeafHashes(messages, chunkSize)
+	if len(leafHashes) == 0 {
+		return "", 0
+	}
+	levels := buildChunkMerkleLevels(leafHashes)
+	if len(levels) == 0 || len(levels[len(levels)-1]) == 0 {
+		return "", len(leafHashes)
+	}
+	root := levels[len(levels)-1][0]
+	return hex.EncodeToString(root), len(leafHashes)
+}
+
+func computeChunkMerkleProofs(messages []protocol.Message, indices []int, chunkSize int) []protocol.SyncChunkProof {
+	if len(indices) == 0 {
+		return nil
+	}
+
+	target := make(map[int]struct{}, len(indices))
+	for _, idx := range indices {
+		if idx >= 0 {
+			target[idx] = struct{}{}
+		}
+	}
+	if len(target) == 0 {
+		return nil
+	}
+
+	ordered := make([]int, 0, len(target))
+	for idx := range target {
+		ordered = append(ordered, idx)
+	}
+	sort.Ints(ordered)
+
+	leafHashes := computeChunkLeafHashes(messages, chunkSize)
+	if len(leafHashes) == 0 {
+		out := make([]protocol.SyncChunkProof, 0, len(ordered))
+		for _, idx := range ordered {
+			out = append(out, protocol.SyncChunkProof{Index: idx})
+		}
+		return out
+	}
+
+	levels := buildChunkMerkleLevels(leafHashes)
+	out := make([]protocol.SyncChunkProof, 0, len(ordered))
+	for _, idx := range ordered {
+		proof := protocol.SyncChunkProof{Index: idx}
+		if idx >= len(leafHashes) {
+			out = append(out, proof)
+			continue
+		}
+		proof.LeafHash = leafHashes[idx]
+		proof.Siblings = buildChunkMerkleProof(levels, idx)
+		out = append(out, proof)
+	}
+	return out
+}
+
+func computeChunkLeafHashes(messages []protocol.Message, chunkSize int) []string {
+	if len(messages) == 0 {
+		return nil
+	}
+	if chunkSize <= 0 {
+		chunkSize = 256
+	}
+
+	chunks := (len(messages) + chunkSize - 1) / chunkSize
+	out := make([]string, 0, chunks)
+	for idx := 0; idx < chunks; idx++ {
+		start := idx*chunkSize + 1
+		end := (idx + 1) * chunkSize
+		if end > len(messages) {
+			end = len(messages)
+		}
+		out = append(out, computeRangeDigest(messages, start, end))
+	}
+	return out
+}
+
+func buildChunkMerkleLevels(leafHashes []string) [][][]byte {
+	if len(leafHashes) == 0 {
+		return nil
+	}
+
+	current := make([][]byte, 0, len(leafHashes))
+	for _, leaf := range leafHashes {
+		current = append(current, decodeOrHashDigest(leaf))
+	}
+
+	levels := make([][][]byte, 0, 8)
+	levels = append(levels, current)
+	for len(current) > 1 {
+		next := make([][]byte, 0, (len(current)+1)/2)
+		for i := 0; i < len(current); i += 2 {
+			left := current[i]
+			right := left
+			if i+1 < len(current) {
+				right = current[i+1]
+			}
+			next = append(next, hashPair(left, right))
+		}
+		levels = append(levels, next)
+		current = next
+	}
+	return levels
+}
+
+func buildChunkMerkleProof(levels [][][]byte, index int) []string {
+	if len(levels) == 0 || index < 0 {
+		return nil
+	}
+	if len(levels[0]) == 0 || index >= len(levels[0]) {
+		return nil
+	}
+
+	siblings := make([]string, 0, len(levels)-1)
+	idx := index
+	for level := 0; level < len(levels)-1; level++ {
+		nodes := levels[level]
+		siblingIdx := idx ^ 1
+		sibling := nodes[idx]
+		if siblingIdx >= 0 && siblingIdx < len(nodes) {
+			sibling = nodes[siblingIdx]
+		}
+		siblings = append(siblings, hex.EncodeToString(sibling))
+		idx /= 2
+	}
+	return siblings
+}
+
+func decodeOrHashDigest(digest string) []byte {
+	raw, err := hex.DecodeString(digest)
+	if err == nil && len(raw) > 0 {
+		return raw
+	}
+	sum := sha256.Sum256([]byte(digest))
+	return sum[:]
+}
+
+func hashPair(left, right []byte) []byte {
+	h := sha256.New()
+	_, _ = h.Write(left)
+	_, _ = h.Write(right)
+	return h.Sum(nil)
+}
+
+func computeRangeDigest(messages []protocol.Message, startOffset, endOffset int) string {
+	if startOffset <= 0 || endOffset < startOffset || endOffset > len(messages) {
+		return ""
+	}
+	h := sha256.New()
+	for i := startOffset - 1; i < endOffset; i++ {
+		raw, err := hex.DecodeString(messages[i].H)
+		if err != nil || len(raw) == 0 {
+			_, _ = h.Write([]byte(messages[i].H))
+			continue
+		}
+		_, _ = h.Write(raw)
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 func computeWindowDigest(messages []protocol.Message, endOffset, windowSize int) string {

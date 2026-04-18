@@ -85,3 +85,16 @@ This compose file intentionally runs in dev clearnet mode.
 - Store data under a dedicated non-root directory.
 - Restrict firewall inbound to chosen listen port.
 - Keep system clock in sync (NTP).
+
+## 7) Operational knobs
+
+- Enable metrics if needed:
+  - `AETHER_METRICS_ENABLED=true`
+  - `AETHER_METRICS_LISTEN=127.0.0.1:9100`
+  - `AETHER_METRICS_PATH=/metrics`
+- Tune sync/resource limits for host capacity:
+  - `AETHER_MAX_SYNC_RESPONSE_MSGS`
+  - `AETHER_MAX_SYNC_RESPONSE_BYTES`
+  - `AETHER_MAX_CONN_BYTES`
+  - `AETHER_MAX_GLOBAL_READ_PER_SEC`
+  - `AETHER_MAX_FRAMES_PER_CONN`

@@ -21,9 +21,11 @@ type PeerServer struct {
 	peers  *PeerBook
 	gossip *Gossip
 
-	mu    sync.Mutex
-	conns map[net.Conn]string
-	seen  map[string]struct{}
+	mu               sync.Mutex
+	conns            map[net.Conn]string
+	seen             map[string]struct{}
+	globalReadWindow time.Time
+	globalReadBytes  int
 }
 
 func NewPeerServer(cfg Config, store *Store, peers *PeerBook) *PeerServer {
@@ -196,6 +198,7 @@ func (s *PeerServer) handleInboundConn(conn net.Conn) {
 	}
 	if s.connectionCount() >= maxOpenConnections(s.cfg) {
 		markFailure(s.peers, peerAddr, s.cfg)
+		Metrics().IncConnectionReject()
 		_ = conn.Close()
 		return
 	}
@@ -245,6 +248,7 @@ func (s *PeerServer) handleEstablishedConn(conn net.Conn, peerAddr string, outbo
 	if len(s.conns) >= maxOpenConnections(s.cfg) {
 		s.mu.Unlock()
 		markFailure(s.peers, peerAddr, s.cfg)
+		Metrics().IncConnectionReject()
 		return
 	}
 	if peerAddr != "" {
@@ -256,6 +260,7 @@ func (s *PeerServer) handleEstablishedConn(conn net.Conn, peerAddr string, outbo
 		}
 	}
 	s.conns[conn] = peerAddr
+	Metrics().SetOpenConnections(len(s.conns))
 	s.mu.Unlock()
 	if s.peers != nil {
 		_, _ = s.peers.Merge(peerAddr)
@@ -266,11 +271,14 @@ func (s *PeerServer) handleEstablishedConn(conn net.Conn, peerAddr string, outbo
 	defer func() {
 		s.mu.Lock()
 		delete(s.conns, conn)
+		Metrics().SetOpenConnections(len(s.conns))
 		s.mu.Unlock()
 	}()
 
 	messageLimiter := newTokenBucket(s.cfg.MaxMessagesPerSec, time.Now())
 	controlLimiter := newTokenBucket(maxControlFramesPerSecond(s.cfg), time.Now())
+	connReadBytes := 0
+	connFrames := 0
 
 	for {
 		_ = conn.SetReadDeadline(time.Now().Add(connectionIdleTimeout(s.cfg)))
@@ -282,6 +290,19 @@ func (s *PeerServer) handleEstablishedConn(conn net.Conn, peerAddr string, outbo
 			return
 		}
 		if len(frame.Payload) > maxJSONPayloadBytes(s.cfg) {
+			markAbuse(s.peers, peerAddr, s.cfg)
+			return
+		}
+		frameBytes := len(frame.Payload) + 5
+		connReadBytes += frameBytes
+		connFrames++
+		if connReadBytes > maxConnectionBytes(s.cfg) || connFrames > maxFramesPerConnection(s.cfg) {
+			Metrics().IncResourceReject()
+			markAbuse(s.peers, peerAddr, s.cfg)
+			return
+		}
+		if !s.allowGlobalRead(frameBytes, time.Now()) {
+			Metrics().IncResourceReject()
 			markAbuse(s.peers, peerAddr, s.cfg)
 			return
 		}
@@ -317,13 +338,19 @@ func (s *PeerServer) handleEstablishedConn(conn net.Conn, peerAddr string, outbo
 				markAbuse(s.peers, peerAddr, s.cfg)
 				return
 			}
-			_ = s.sendSync(conn, frame.Payload)
+			if err := s.sendSync(conn, frame.Payload); err != nil {
+				markAbuse(s.peers, peerAddr, s.cfg)
+				return
+			}
 		case protocol.FrameSyncMeta:
 			if !controlLimiter.allow(time.Now()) {
 				markAbuse(s.peers, peerAddr, s.cfg)
 				return
 			}
-			_ = s.sendSyncMeta(conn, frame.Payload)
+			if err := s.sendSyncMeta(conn, frame.Payload); err != nil {
+				markAbuse(s.peers, peerAddr, s.cfg)
+				return
+			}
 		case protocol.FramePeers:
 			if !controlLimiter.allow(time.Now()) {
 				markAbuse(s.peers, peerAddr, s.cfg)
@@ -482,6 +509,9 @@ func (s *PeerServer) sendSync(conn net.Conn, raw []byte) error {
 	if err != nil {
 		return err
 	}
+	if len(payload) > maxSyncResponseBytes(s.cfg) {
+		return errors.New("sync response exceeds byte budget")
+	}
 	return protocol.WriteFrame(conn, protocol.FrameSyncData, payload)
 }
 
@@ -494,7 +524,11 @@ func (s *PeerServer) sendSyncMeta(conn net.Conn, raw []byte) error {
 	}
 	req.Offsets = limitIntSlice(req.Offsets, maxSyncMetaOffsets(s.cfg))
 	req.AccumulatorOffsets = limitIntSlice(req.AccumulatorOffsets, maxSyncMetaOffsets(s.cfg))
+	req.ChunkIndices = limitIntSlice(req.ChunkIndices, maxSyncMetaOffsets(s.cfg))
 	req.WindowEnds = limitIntSlice(req.WindowEnds, maxSyncMetaOffsets(s.cfg))
+	if req.ChunkSize <= 0 {
+		req.ChunkSize = syncChunkSize(s.cfg)
+	}
 	if req.WindowSize <= 0 {
 		req.WindowSize = syncWindowSize(s.cfg)
 	}
@@ -745,6 +779,28 @@ func markAbuse(book *PeerBook, peer string, cfg Config) {
 	book.MarkPenalty(peer, 3, cfg.PeerBackoff, cfg.PeerBanThreshold, cfg.PeerBanDuration, time.Now())
 }
 
+func (s *PeerServer) allowGlobalRead(frameBytes int, now time.Time) bool {
+	if frameBytes <= 0 {
+		return true
+	}
+	limit := maxGlobalReadPerSecond(s.cfg)
+	if limit <= 0 {
+		return true
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.globalReadWindow.IsZero() || now.Sub(s.globalReadWindow) >= time.Second {
+		s.globalReadWindow = now
+		s.globalReadBytes = 0
+	}
+	if s.globalReadBytes+frameBytes > limit {
+		return false
+	}
+	s.globalReadBytes += frameBytes
+	return true
+}
+
 func targetPeerCount(cfg Config) int {
 	if cfg.TargetPeerCount <= 0 {
 		return 8
@@ -778,6 +834,34 @@ func maxJSONPayloadBytes(cfg Config) int {
 		return 1024 * 1024
 	}
 	return cfg.MaxJSONPayloadBytes
+}
+
+func maxConnectionBytes(cfg Config) int {
+	if cfg.MaxConnBytes <= 0 {
+		return 8 * 1024 * 1024
+	}
+	return cfg.MaxConnBytes
+}
+
+func maxGlobalReadPerSecond(cfg Config) int {
+	if cfg.MaxGlobalReadPerSec <= 0 {
+		return 32 * 1024 * 1024
+	}
+	return cfg.MaxGlobalReadPerSec
+}
+
+func maxFramesPerConnection(cfg Config) int {
+	if cfg.MaxFramesPerConn <= 0 {
+		return 4000
+	}
+	return cfg.MaxFramesPerConn
+}
+
+func maxSyncResponseBytes(cfg Config) int {
+	if cfg.MaxSyncResponseBytes <= 0 {
+		return 2 * 1024 * 1024
+	}
+	return cfg.MaxSyncResponseBytes
 }
 
 func maxSyncMetaOffsets(cfg Config) int {

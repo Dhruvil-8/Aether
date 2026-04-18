@@ -31,7 +31,9 @@ type Config struct {
 	SyncInterval          time.Duration
 	SyncBatchSize         int
 	SyncWindowSize        int
+	SyncChunkSize         int
 	MaxSyncResponseMsgs   int
+	MaxSyncResponseBytes  int
 	MaxSyncMetaOffsets    int
 	TargetPeerCount       int
 	MaxOpenConnections    int
@@ -46,6 +48,9 @@ type Config struct {
 	MaxMessagesPerSec     int
 	MaxControlPerSec      int
 	MaxJSONPayloadBytes   int
+	MaxConnBytes          int
+	MaxGlobalReadPerSec   int
+	MaxFramesPerConn      int
 	ConnectionIdleTimeout time.Duration
 	TorDialTimeout        time.Duration
 	TorHealthInterval     time.Duration
@@ -77,7 +82,9 @@ func DefaultConfig() Config {
 		SyncInterval:          envSeconds("AETHER_SYNC_INTERVAL_SEC", 180),
 		SyncBatchSize:         envInt("AETHER_SYNC_BATCH_SIZE", 256),
 		SyncWindowSize:        envInt("AETHER_SYNC_WINDOW_SIZE", 32),
+		SyncChunkSize:         envInt("AETHER_SYNC_CHUNK_SIZE", 256),
 		MaxSyncResponseMsgs:   envInt("AETHER_MAX_SYNC_RESPONSE_MSGS", 256),
+		MaxSyncResponseBytes:  envInt("AETHER_MAX_SYNC_RESPONSE_BYTES", 2097152),
 		MaxSyncMetaOffsets:    envInt("AETHER_MAX_SYNC_META_OFFSETS", 128),
 		TargetPeerCount:       envInt("AETHER_TARGET_PEERS", 8),
 		MaxOpenConnections:    envInt("AETHER_MAX_OPEN_CONNECTIONS", 32),
@@ -92,6 +99,9 @@ func DefaultConfig() Config {
 		MaxMessagesPerSec:     envInt("AETHER_MAX_MSG_PER_SEC", 20),
 		MaxControlPerSec:      envInt("AETHER_MAX_CONTROL_PER_SEC", 30),
 		MaxJSONPayloadBytes:   envInt("AETHER_MAX_JSON_PAYLOAD_BYTES", 1048576),
+		MaxConnBytes:          envInt("AETHER_MAX_CONN_BYTES", 8388608),
+		MaxGlobalReadPerSec:   envInt("AETHER_MAX_GLOBAL_READ_PER_SEC", 33554432),
+		MaxFramesPerConn:      envInt("AETHER_MAX_FRAMES_PER_CONN", 4000),
 		ConnectionIdleTimeout: envSeconds("AETHER_CONN_IDLE_TIMEOUT_SEC", 90),
 		TorDialTimeout:        envSeconds("AETHER_TOR_DIAL_TIMEOUT_SEC", 5),
 		TorHealthInterval:     envSeconds("AETHER_TOR_HEALTH_INTERVAL_SEC", 30),
@@ -112,8 +122,14 @@ func DefaultConfig() Config {
 	if cfg.SyncWindowSize <= 0 {
 		cfg.SyncWindowSize = 32
 	}
+	if cfg.SyncChunkSize <= 0 {
+		cfg.SyncChunkSize = 256
+	}
 	if cfg.MaxSyncResponseMsgs <= 0 {
 		cfg.MaxSyncResponseMsgs = 256
+	}
+	if cfg.MaxSyncResponseBytes <= 0 {
+		cfg.MaxSyncResponseBytes = 2 * 1024 * 1024
 	}
 	if cfg.MaxSyncMetaOffsets <= 0 {
 		cfg.MaxSyncMetaOffsets = 128
@@ -153,6 +169,15 @@ func DefaultConfig() Config {
 	}
 	if cfg.MaxJSONPayloadBytes <= 0 {
 		cfg.MaxJSONPayloadBytes = 1024 * 1024
+	}
+	if cfg.MaxConnBytes <= 0 {
+		cfg.MaxConnBytes = 8 * 1024 * 1024
+	}
+	if cfg.MaxGlobalReadPerSec <= 0 {
+		cfg.MaxGlobalReadPerSec = 32 * 1024 * 1024
+	}
+	if cfg.MaxFramesPerConn <= 0 {
+		cfg.MaxFramesPerConn = 4000
 	}
 	if cfg.ConnectionIdleTimeout <= 0 {
 		cfg.ConnectionIdleTimeout = 90 * time.Second

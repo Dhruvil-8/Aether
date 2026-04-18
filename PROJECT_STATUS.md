@@ -29,6 +29,8 @@ It is no longer just a protocol idea. A working Go implementation exists with:
 - sync metadata with checkpoint validation for persisted cursors
 - sync metadata with rolling window digests and tip-hash reporting
 - sync metadata with accumulator digests for stronger recovery checkpoints
+- sync metadata with fixed chunk digests for stronger cursor recovery anchors
+- sync metadata with chunk-Merkle root/proof validation for chunk recovery
 - fallback to healthy peers after failed send/sync/bootstrap attempts
 - persistent peer reputation with score decay and eviction thresholds
 - eviction cooldowns that block immediate peer reintroduction
@@ -40,8 +42,9 @@ It is no longer just a protocol idea. A working Go implementation exists with:
 - optional Prometheus-style metrics endpoint with runtime counters
 - archive-mode signaling with bounded non-archive history serving policy
 - JSON payload size caps and idle-connection read deadlines
+- per-connection and global inbound read-budget guards
 - operational packaging assets (`Dockerfile`, compose, PowerShell build/smoke scripts)
-- open-source readiness assets (`README`, `LICENSE`, `CONTRIBUTING`, `SECURITY`, CI workflow)
+- open-source readiness assets (`README`, `LICENSE`, `CONTRIBUTING`, `SECURITY`, CI/release workflows)
 
 ## Achieved
 
@@ -55,6 +58,8 @@ It is no longer just a protocol idea. A working Go implementation exists with:
 - Sync metadata frames for cursor validation
 - Sync metadata frames with rolling window digests
 - Sync metadata frames with accumulator digests
+- Sync metadata frames with fixed chunk digests
+- Sync metadata frames with chunk-Merkle root and inclusion proofs
 - ACK-based message acceptance
 - Local caps on sync and peer-exchange payload sizes regardless of remote request size
 - Local caps on sync-metadata request cardinality
@@ -67,6 +72,8 @@ It is no longer just a protocol idea. A working Go implementation exists with:
 - Sparse sync checkpoints carried in persisted cursors with fallback to the last matching checkpoint
 - Rolling window digests in persisted cursors with fallback to the last matching digest window
 - Accumulator digests in persisted cursors with fallback before window-based recovery
+- Chunk digests in persisted cursors with fallback before rolling-window recovery
+- Chunk-digest fallback gated by chunk-Merkle proof verification when provided
 
 ### Node behavior
 
@@ -81,6 +88,7 @@ It is no longer just a protocol idea. A working Go implementation exists with:
 - Persisted sparse sync checkpoints for partial cursor recovery
 - Persisted window digests for stronger partial cursor recovery
 - Persisted accumulator digests for stronger partial cursor recovery
+- Persisted chunk digests for stronger partial cursor recovery
 - Background bootstrap loop
 - Background peer exchange loop
 - Background sync loop
@@ -88,6 +96,7 @@ It is no longer just a protocol idea. A working Go implementation exists with:
 - Basic peer rate limiting and invalid-message disconnect behavior
 - JSON payload cap enforcement before JSON decode
 - Idle read deadlines on established peer connections
+- Per-connection and global read-byte budgeting on established peer connections
 - Peer announcement clamping before persistence
 - Connection-cap rejection and backoff for excess peers
 - Repeat-offender scoring with temporary bans
@@ -115,6 +124,7 @@ It is no longer just a protocol idea. A working Go implementation exists with:
 - Structured leveled logger configurable via `AETHER_LOG_LEVEL`
 - Log coverage for `serve`, `post`, bootstrap failures, sync failures, connector/peer-exchange debug ticks, and Tor lifecycle events
 - Optional metrics endpoint (`AETHER_METRICS_ENABLED`) with counters for relay/sync/peer/Tor recovery behavior
+- Additional metrics for open connections, connection-cap rejects, and resource-budget rejects
 
 ### Testing
 
@@ -133,11 +143,14 @@ It is no longer just a protocol idea. A working Go implementation exists with:
 - Integration coverage for checkpoint-based sync fallback and bridge-node recovery after restart
 - Integration coverage for window-digest-based sync fallback
 - Integration coverage for accumulator-digest-based sync fallback
+- Integration coverage for chunk-digest-based sync fallback
+- Unit coverage for chunk-Merkle proof verification and tamper rejection
 - Sustained sync convergence coverage under repeated dead-peer fallback loops
 - Partition/bridge flap convergence coverage with explicit sync-based catch-up
 - Focused coverage for non-archive recent-history sync serving policy
 - Focused coverage for sync metadata window digest generation and tip hash
 - Focused coverage for oversized JSON payload disconnect/backoff behavior
+- Focused coverage for per-connection/global read-budget disconnect behavior
 
 ## Pending
 
@@ -145,14 +158,14 @@ It is no longer just a protocol idea. A working Go implementation exists with:
 
 - Longer-horizon reputation tuning beyond persistent decay, cooldown, and threshold eviction
 - Broader long-duration soak and multi-partition integration campaigns beyond current bridge-flap coverage
-- Stronger archival sync metadata beyond checkpoint/accumulator/window-digest recovery
+- Stronger cross-peer trust model for archival sync beyond single-peer chunk-Merkle proof recovery
 
 ### Production hardening
 
-- Rich observability (metrics/tracing) beyond structured logs
-- Release packaging automation (signing/versioned artifacts) beyond current Docker/PowerShell assets
+- Rich observability (tracing/latency histograms) beyond structured logs and current counters
+- Release signing and provenance beyond current versioned GitHub artifacts/checksums
 - Archive-node policy expansion beyond current non-archive history window behavior
-- Global resource accounting and stress limits beyond current payload/idle/read guards
+- Stress validation and tuning beyond current payload/idle/read/global-byte guards
 
 ### Not done yet
 
@@ -168,16 +181,15 @@ It is no longer just a protocol idea. A working Go implementation exists with:
 - Reliability is better than before because of ACKs, but still not equivalent to a mature messaging network
 - Tor integration now fails faster and more clearly at startup, but still depends on an existing Tor installation and compatible control-port configuration
 - Managed-Tor startup/supervision requires a Tor binary on host and does not auto-install dependencies
-- The node now bounds several remote-controlled paths, but it still needs more global resource accounting under sustained load
-- Defensive parsing and resource limits are stronger (JSON caps, sync-meta caps, idle deadlines), but sustained-load accounting is still incomplete
+- The node now bounds several remote-controlled paths including global read budgets, but sustained-load tuning is still required
+- Defensive parsing and resource limits are stronger (JSON caps, sync-meta caps, idle deadlines, per-conn/global read budgets), but sustained soak coverage is still incomplete
 - Peer penalties now persist, decay, and quarantine evicted peers across restarts, but long-horizon tuning is still simple
-- Sync metadata now supports sparse checkpoint recovery, but it is still not a full archival proof structure such as sparse Merkle verification
-- Sync metadata now supports checkpoint/accumulator/window fallback recovery, but it is still not a full archival proof structure such as sparse Merkle verification
+- Sync metadata now supports checkpoint/accumulator/chunk-window fallback with chunk-Merkle proof checks, but it is still not a full cross-peer archival trust model
 - Failure fallback now covers repeated dead-peer, checkpoint/accumulator recovery, and bridge-flap cases, but not yet long-duration soak or multi-partition campaigns
 
 ## Recommended Next Steps
 
 1. Tune long-horizon reputation and eviction policy under real churn, repeated reintroduction, and long-lived peer histories.
 2. Expand from dead-peer fallback and bridge-flap recovery tests to longer soak, churn, and multi-partition integration scenarios.
-3. Improve sync metadata from checkpoint/accumulator/window recovery toward sparse archival proof verification.
-4. Add release-grade packaging automation (signed versioned artifacts) and expanded deployment operator docs.
+3. Improve sync trust from single-peer chunk-Merkle proof recovery toward cross-peer/sparse archival proof verification.
+4. Add release signing/provenance and expanded deployment operator docs.

@@ -181,6 +181,8 @@ Main pieces:
   - `tip_hash`
   - checkpoint hashes for requested offsets
   - accumulator digests for requested offsets
+  - fixed chunk digests for requested chunk indices
+  - chunk-Merkle root and inclusion proofs for requested chunks
   - rolling window digests for requested window ends/sizes
 
 Persisted sync state:
@@ -192,6 +194,10 @@ Persisted sync state:
     "last_hash": "...",
     "checkpoints": [...],
     "accumulators": [...],
+    "chunk_digests": [...],
+    "chunk_merkle_root": "...",
+    "chunk_merkle_leaves": 42,
+    "chunk_merkle_proofs": [...],
     "window_digests": [...]
   }
 }
@@ -202,18 +208,19 @@ Resume behavior:
 - syncer asks peer for metadata before trusting saved cursor
 - if direct `last_hash` check fails, syncer validates saved checkpoints
 - if checkpoint validation fails, syncer validates saved accumulators
-- if accumulator validation fails, syncer falls back to last matching window digest
+- if accumulator validation fails, syncer validates saved chunk digests using chunk-Merkle proofs
+- if chunk validation fails, syncer falls back to last matching window digest
 - if nothing matches, sync resumes from zero safely
 
 What sync is today:
 
 - practical for MVP
 - better than full known-hash exchange
-- supports checkpoint, accumulator, and rolling-window fallback recovery
+- supports checkpoint, accumulator, chunk-Merkle proof, and rolling-window fallback recovery
 
 What sync is not yet:
 
-- sparse-proof/Merkle verified archival sync
+- full cross-peer trust model and sparse archival proofs beyond current chunk-Merkle recovery proofs
 
 ## Storage
 
@@ -279,7 +286,10 @@ Current enforcement includes:
 - peer-list caps
 - connection caps
 - JSON payload caps before decode
+- sync response byte caps
 - idle read deadlines on established peer connections
+- per-connection read-byte and frame budgets
+- global inbound read-byte budget per second
 - persistent peer scoring
 - temporary bans and eviction cooldown
 - fallback to healthy peers on peer failures
@@ -301,6 +311,8 @@ Current counters include:
 - sync batches, applied messages, and failures
 - peer dial failures and abuse events
 - Tor recovery events
+- connection and resource-limit rejects
+- open connection gauge
 
 ## Current Commands
 
@@ -313,6 +325,6 @@ Current counters include:
 
 ## Next Protocol Work
 
-- stronger archival sync proofs beyond checkpoint/accumulator/window-digest recovery
+- stronger archival sync trust model (cross-peer proof agreement, sparse archival proofs)
 - longer-running partition/churn soak validation
 - longer-horizon reputation tuning

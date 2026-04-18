@@ -18,6 +18,9 @@ func TestRuntimeMetricsRenderPrometheus(t *testing.T) {
 	m.IncPeerDialFailure()
 	m.IncPeerAbuse()
 	m.IncTorRecovery()
+	m.IncConnectionReject()
+	m.IncResourceReject()
+	m.SetOpenConnections(3)
 
 	out := m.RenderPrometheus()
 	for _, needle := range []string{
@@ -29,10 +32,18 @@ func TestRuntimeMetricsRenderPrometheus(t *testing.T) {
 		"aether_peer_dial_failures_total 1",
 		"aether_peer_abuse_events_total 1",
 		"aether_tor_recoveries_total 1",
+		"aether_connection_rejects_total 1",
+		"aether_resource_rejects_total 1",
+		"aether_open_connections 3",
 	} {
 		if !strings.Contains(out, needle) {
 			t.Fatalf("expected metrics output to contain %q, got:\n%s", needle, out)
 		}
+	}
+
+	snapshot := m.Snapshot()
+	if snapshot.ConnectionRejects != 1 || snapshot.ResourceRejects != 1 || snapshot.OpenConnections != 3 {
+		t.Fatalf("unexpected metrics snapshot: %+v", snapshot)
 	}
 }
 
