@@ -211,16 +211,18 @@ Resume behavior:
 - if accumulator validation fails, syncer validates saved chunk digests using chunk-Merkle proofs
 - if chunk validation fails, syncer falls back to last matching window digest
 - if nothing matches, sync resumes from zero safely
+- operators can set `AETHER_SYNC_TRUST_QUORUM` above 1 to require matching sync metadata from multiple peers before cursor recovery trusts a peer's view
 
 What sync is today:
 
 - practical for MVP
 - better than full known-hash exchange
 - supports checkpoint, accumulator, chunk-Merkle proof, and rolling-window fallback recovery
+- supports opt-in cross-peer metadata agreement before recovery
 
 What sync is not yet:
 
-- full cross-peer trust model and sparse archival proofs beyond current chunk-Merkle recovery proofs
+- sparse archival proofs beyond current chunk-Merkle recovery proofs
 
 ## Storage
 
@@ -313,6 +315,7 @@ Current counters include:
 - Tor recovery events
 - connection and resource-limit rejects
 - open connection gauge
+- sync and peer-dial latency histograms
 
 ## Current Commands
 
@@ -325,6 +328,6 @@ Current counters include:
 
 ## Next Protocol Work
 
-- stronger archival sync trust model (cross-peer proof agreement, sparse archival proofs)
+- stronger archival sync trust model (sparse archival proofs and richer peer diversity policies)
 - longer-running partition/churn soak validation
 - longer-horizon reputation tuning

@@ -445,3 +445,26 @@ func TestDefaultConfigMetricsFallbacks(t *testing.T) {
 		t.Fatalf("unexpected metrics path normalization: %s", cfg.MetricsPath)
 	}
 }
+
+func TestDefaultConfigSyncTrustQuorumFallback(t *testing.T) {
+	original := os.Getenv("AETHER_SYNC_TRUST_QUORUM")
+	t.Cleanup(func() {
+		if original == "" {
+			_ = os.Unsetenv("AETHER_SYNC_TRUST_QUORUM")
+			return
+		}
+		_ = os.Setenv("AETHER_SYNC_TRUST_QUORUM", original)
+	})
+
+	_ = os.Setenv("AETHER_SYNC_TRUST_QUORUM", "0")
+	cfg := DefaultConfig()
+	if cfg.SyncTrustQuorum != 1 {
+		t.Fatalf("unexpected sync trust quorum fallback: %d", cfg.SyncTrustQuorum)
+	}
+
+	_ = os.Setenv("AETHER_SYNC_TRUST_QUORUM", "2")
+	cfg = DefaultConfig()
+	if cfg.SyncTrustQuorum != 2 {
+		t.Fatalf("unexpected sync trust quorum: %d", cfg.SyncTrustQuorum)
+	}
+}

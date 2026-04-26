@@ -2,7 +2,9 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"time"
@@ -48,7 +50,12 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req PostRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSONBody(w, r, &req, s.cfg.MaxJSONPayloadBytes); err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+			return
+		}
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
@@ -125,6 +132,8 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 			ConnectionRejects: snapshot.ConnectionRejects,
 			ResourceRejects:   snapshot.ResourceRejects,
 			OpenConnections:   snapshot.OpenConnections,
+			SyncLatencyCount:  snapshot.SyncLatencyCount,
+			PeerDialCount:     snapshot.PeerDialCount,
 		},
 	}
 
@@ -212,6 +221,8 @@ type MetricsSnapshot struct {
 	ConnectionRejects uint64 `json:"connection_rejects"`
 	ResourceRejects   uint64 `json:"resource_rejects"`
 	OpenConnections   int64  `json:"open_connections"`
+	SyncLatencyCount  uint64 `json:"sync_latency_count"`
+	PeerDialCount     uint64 `json:"peer_dial_count"`
 }
 
 type PeerView struct {
@@ -264,4 +275,21 @@ func timeAgo(unixSec int64) string {
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+func decodeJSONBody(w http.ResponseWriter, r *http.Request, dest any, maxBytes int) error {
+	if maxBytes <= 0 {
+		maxBytes = 1024 * 1024
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, int64(maxBytes))
+
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(dest); err != nil {
+		return err
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return errors.New("request body must contain a single JSON object")
+	}
+	return nil
 }

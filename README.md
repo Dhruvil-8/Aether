@@ -6,7 +6,7 @@ Aether is a protocol for a global append-only stream of messages with no authors
 
 ## Development
 
-This codebase was generated and iterated with LLM-assisted development.
+This codebase was generated and iterated with LLM-assisted(OpenAI-Codex) development.
 
 ## What this repo provides
 
@@ -60,6 +60,8 @@ Use Tor-required mode:
 
 - `AETHER_REQUIRE_TOR=true`
 - `AETHER_DEV_CLEARNET=false`
+- `AETHER_UI_ALLOWED_ORIGINS` can be set to a comma-separated list of trusted external web origins if the UI/API is hosted across origins. Same-origin UI requests and non-browser local tooling do not need this.
+- `AETHER_SYNC_TRUST_QUORUM=2` or higher enables cross-peer agreement checks for sync metadata before trusting cursor recovery.
 
 Optional managed Tor process:
 
@@ -91,7 +93,7 @@ docker compose -f .\deploy\docker-compose.dev.yml up --build
 ## CI and release
 
 - CI test workflow: `.github/workflows/ci.yml`
-- Tag-triggered release workflow with multi-platform artifacts + `SHA256SUMS`: `.github/workflows/release.yml`
+- Tag-triggered release workflow with multi-platform artifacts, `SHA256SUMS`, `PROVENANCE.json`, and keyless Sigstore bundles: `.github/workflows/release.yml`
 
 ## Safety and claims
 

@@ -31,6 +31,7 @@ It is no longer just a protocol idea. A working Go implementation exists with:
 - sync metadata with accumulator digests for stronger recovery checkpoints
 - sync metadata with fixed chunk digests for stronger cursor recovery anchors
 - sync metadata with chunk-Merkle root/proof validation for chunk recovery
+- optional cross-peer sync metadata quorum before cursor recovery
 - fallback to healthy peers after failed send/sync/bootstrap attempts
 - persistent peer reputation with score decay and eviction thresholds
 - eviction cooldowns that block immediate peer reintroduction
@@ -40,11 +41,13 @@ It is no longer just a protocol idea. A working Go implementation exists with:
 - optional managed-Tor process startup and supervision in `serve`
 - structured leveled logging (`debug`/`info`/`warn`/`error`) across serve/post and maintenance loops
 - optional Prometheus-style metrics endpoint with runtime counters
+- Prometheus-style latency histograms for sync iterations and peer dials
 - archive-mode signaling with bounded non-archive history serving policy
 - JSON payload size caps and idle-connection read deadlines
 - per-connection and global inbound read-budget guards
 - operational packaging assets (`Dockerfile`, compose, PowerShell build/smoke scripts)
 - open-source readiness assets (`README`, `LICENSE`, `CONTRIBUTING`, `SECURITY`, CI/release workflows)
+- release provenance manifest and keyless Sigstore signature bundles in tag releases
 
 ## Achieved
 
@@ -74,6 +77,7 @@ It is no longer just a protocol idea. A working Go implementation exists with:
 - Accumulator digests in persisted cursors with fallback before window-based recovery
 - Chunk digests in persisted cursors with fallback before rolling-window recovery
 - Chunk-digest fallback gated by chunk-Merkle proof verification when provided
+- Optional sync metadata trust quorum across multiple peers before cursor recovery
 
 ### Node behavior
 
@@ -125,6 +129,7 @@ It is no longer just a protocol idea. A working Go implementation exists with:
 - Log coverage for `serve`, `post`, bootstrap failures, sync failures, connector/peer-exchange debug ticks, and Tor lifecycle events
 - Optional metrics endpoint (`AETHER_METRICS_ENABLED`) with counters for relay/sync/peer/Tor recovery behavior
 - Additional metrics for open connections, connection-cap rejects, and resource-budget rejects
+- Latency histogram metrics for sync iterations and peer dials
 
 ### Testing
 
@@ -151,6 +156,7 @@ It is no longer just a protocol idea. A working Go implementation exists with:
 - Focused coverage for sync metadata window digest generation and tip hash
 - Focused coverage for oversized JSON payload disconnect/backoff behavior
 - Focused coverage for per-connection/global read-budget disconnect behavior
+- Focused coverage for browser API CORS/body limits and sync metadata quorum checks
 
 ## Pending
 
@@ -158,21 +164,19 @@ It is no longer just a protocol idea. A working Go implementation exists with:
 
 - Longer-horizon reputation tuning beyond persistent decay, cooldown, and threshold eviction
 - Broader long-duration soak and multi-partition integration campaigns beyond current bridge-flap coverage
-- Stronger cross-peer trust model for archival sync beyond single-peer chunk-Merkle proof recovery
+- Stronger sparse archival proof model beyond current chunk-Merkle proof recovery and optional metadata quorum
 
 ### Production hardening
 
-- Rich observability (tracing/latency histograms) beyond structured logs and current counters
-- Release signing and provenance beyond current versioned GitHub artifacts/checksums
+- Rich observability beyond structured logs, counters, and current latency histograms
 - Archive-node policy expansion beyond current non-archive history window behavior
 - Stress validation and tuning beyond current payload/idle/read/global-byte guards
 
 ### Not done yet
 
-- Browser client
 - Desktop app
 - Moderation/client-layer filtering
-- Advanced archival verification such as Merkle-based sync
+- Advanced sparse archival verification beyond chunk-Merkle sync recovery
 
 ## Honest Risks
 
@@ -184,12 +188,12 @@ It is no longer just a protocol idea. A working Go implementation exists with:
 - The node now bounds several remote-controlled paths including global read budgets, but sustained-load tuning is still required
 - Defensive parsing and resource limits are stronger (JSON caps, sync-meta caps, idle deadlines, per-conn/global read budgets), but sustained soak coverage is still incomplete
 - Peer penalties now persist, decay, and quarantine evicted peers across restarts, but long-horizon tuning is still simple
-- Sync metadata now supports checkpoint/accumulator/chunk-window fallback with chunk-Merkle proof checks, but it is still not a full cross-peer archival trust model
+- Sync metadata now supports checkpoint/accumulator/chunk-window fallback with chunk-Merkle proof checks and optional cross-peer metadata quorum, but it is still not a full sparse archival trust model
 - Failure fallback now covers repeated dead-peer, checkpoint/accumulator recovery, and bridge-flap cases, but not yet long-duration soak or multi-partition campaigns
 
 ## Recommended Next Steps
 
 1. Tune long-horizon reputation and eviction policy under real churn, repeated reintroduction, and long-lived peer histories.
 2. Expand from dead-peer fallback and bridge-flap recovery tests to longer soak, churn, and multi-partition integration scenarios.
-3. Improve sync trust from single-peer chunk-Merkle proof recovery toward cross-peer/sparse archival proof verification.
-4. Add release signing/provenance and expanded deployment operator docs.
+3. Improve sync trust from chunk-Merkle proof recovery and metadata quorum toward sparse archival proof verification.
+4. Expand deployment/operator docs as production feedback accumulates.

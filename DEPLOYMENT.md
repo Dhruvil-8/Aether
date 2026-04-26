@@ -82,6 +82,8 @@ This compose file intentionally runs in dev clearnet mode.
 
 - Keep `AETHER_REQUIRE_TOR=true` in production.
 - Keep `AETHER_DEV_CLEARNET=false` in production.
+- Leave `AETHER_UI_ALLOWED_ORIGINS` empty unless a separate trusted browser origin must call the local UI API.
+- Set `AETHER_SYNC_TRUST_QUORUM=2` or higher on archive-oriented nodes that have enough independent peers for sync metadata agreement checks.
 - Store data under a dedicated non-root directory.
 - Restrict firewall inbound to chosen listen port.
 - Keep system clock in sync (NTP).

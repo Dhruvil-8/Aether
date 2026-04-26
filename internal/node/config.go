@@ -30,6 +30,7 @@ type Config struct {
 	PeerExchangeInterval  time.Duration
 	SyncInterval          time.Duration
 	SyncBatchSize         int
+	SyncTrustQuorum       int
 	SyncWindowSize        int
 	SyncChunkSize         int
 	MaxSyncResponseMsgs   int
@@ -56,6 +57,7 @@ type Config struct {
 	TorHealthInterval     time.Duration
 	ArchiveMode           bool
 	RelayHistoryWindow    int
+	UIAllowedOrigins      []string
 	DevClearnet           bool
 	RequireTorProxy       bool
 }
@@ -81,6 +83,7 @@ func DefaultConfig() Config {
 		PeerExchangeInterval:  envSeconds("AETHER_PEER_EXCHANGE_INTERVAL_SEC", 120),
 		SyncInterval:          envSeconds("AETHER_SYNC_INTERVAL_SEC", 180),
 		SyncBatchSize:         envInt("AETHER_SYNC_BATCH_SIZE", 256),
+		SyncTrustQuorum:       envInt("AETHER_SYNC_TRUST_QUORUM", 1),
 		SyncWindowSize:        envInt("AETHER_SYNC_WINDOW_SIZE", 32),
 		SyncChunkSize:         envInt("AETHER_SYNC_CHUNK_SIZE", 256),
 		MaxSyncResponseMsgs:   envInt("AETHER_MAX_SYNC_RESPONSE_MSGS", 256),
@@ -107,6 +110,7 @@ func DefaultConfig() Config {
 		TorHealthInterval:     envSeconds("AETHER_TOR_HEALTH_INTERVAL_SEC", 30),
 		ArchiveMode:           envBool("AETHER_ARCHIVE_MODE", false),
 		RelayHistoryWindow:    envInt("AETHER_RELAY_HISTORY_WINDOW", 4096),
+		UIAllowedOrigins:      splitCSV(os.Getenv("AETHER_UI_ALLOWED_ORIGINS")),
 		DevClearnet:           envBool("AETHER_DEV_CLEARNET", false),
 		RequireTorProxy:       envBool("AETHER_REQUIRE_TOR", true),
 	}
@@ -118,6 +122,9 @@ func DefaultConfig() Config {
 	}
 	if cfg.SyncBatchSize <= 0 {
 		cfg.SyncBatchSize = 256
+	}
+	if cfg.SyncTrustQuorum <= 0 {
+		cfg.SyncTrustQuorum = 1
 	}
 	if cfg.SyncWindowSize <= 0 {
 		cfg.SyncWindowSize = 32

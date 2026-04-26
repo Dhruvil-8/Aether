@@ -6,6 +6,8 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"aether/internal/node"
@@ -57,9 +59,17 @@ func (s *Server) registerRoutes() {
 
 func (s *Server) corsWrap(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		origin := strings.TrimSpace(r.Header.Get("Origin"))
+		if origin != "" {
+			w.Header().Add("Vary", "Origin")
+			if !s.originAllowed(r, origin) {
+				http.Error(w, "origin not allowed", http.StatusForbidden)
+				return
+			}
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		}
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
@@ -68,11 +78,40 @@ func (s *Server) corsWrap(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+func (s *Server) originAllowed(r *http.Request, origin string) bool {
+	if sameOrigin(r, origin) {
+		return true
+	}
+	for _, allowed := range s.cfg.UIAllowedOrigins {
+		if strings.EqualFold(strings.TrimSpace(allowed), origin) {
+			return true
+		}
+	}
+	return false
+}
+
+func sameOrigin(r *http.Request, origin string) bool {
+	parsed, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return false
+	}
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	return parsed.Scheme == scheme && strings.EqualFold(parsed.Host, r.Host)
+}
+
 // ListenAndServe starts the API server and blocks until ctx is cancelled.
 func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
 	s.srv = &http.Server{
 		Handler:           s.mux,
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
 
 	ln, err := net.Listen("tcp", addr)

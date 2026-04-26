@@ -441,6 +441,11 @@ func clientHandshake(conn net.Conn, cfg Config) (protocol.HelloPayload, error) {
 }
 
 func dialPeer(cfg Config, target string) (net.Conn, error) {
+	start := time.Now()
+	defer func() {
+		Metrics().ObservePeerDialDuration(time.Since(start))
+	}()
+
 	if cfg.DevClearnet {
 		timeout := cfg.TorDialTimeout
 		if timeout <= 0 {

@@ -21,6 +21,8 @@ func TestRuntimeMetricsRenderPrometheus(t *testing.T) {
 	m.IncConnectionReject()
 	m.IncResourceReject()
 	m.SetOpenConnections(3)
+	m.ObserveSyncDuration(150 * time.Millisecond)
+	m.ObservePeerDialDuration(1200 * time.Millisecond)
 
 	out := m.RenderPrometheus()
 	for _, needle := range []string{
@@ -35,6 +37,10 @@ func TestRuntimeMetricsRenderPrometheus(t *testing.T) {
 		"aether_connection_rejects_total 1",
 		"aether_resource_rejects_total 1",
 		"aether_open_connections 3",
+		"aether_sync_duration_seconds_bucket{le=\"0.25\"} 1",
+		"aether_sync_duration_seconds_count 1",
+		"aether_peer_dial_duration_seconds_bucket{le=\"2.5\"} 1",
+		"aether_peer_dial_duration_seconds_count 1",
 	} {
 		if !strings.Contains(out, needle) {
 			t.Fatalf("expected metrics output to contain %q, got:\n%s", needle, out)
@@ -42,7 +48,7 @@ func TestRuntimeMetricsRenderPrometheus(t *testing.T) {
 	}
 
 	snapshot := m.Snapshot()
-	if snapshot.ConnectionRejects != 1 || snapshot.ResourceRejects != 1 || snapshot.OpenConnections != 3 {
+	if snapshot.ConnectionRejects != 1 || snapshot.ResourceRejects != 1 || snapshot.OpenConnections != 3 || snapshot.SyncLatencyCount != 1 || snapshot.PeerDialCount != 1 {
 		t.Fatalf("unexpected metrics snapshot: %+v", snapshot)
 	}
 }

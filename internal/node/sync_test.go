@@ -45,6 +45,117 @@ func TestVerifyChunkMerkleProofRejectsTampering(t *testing.T) {
 	}
 }
 
+func TestConfirmSyncMetaRequiresQuorumAgreement(t *testing.T) {
+	primary := &protocol.SyncMetaPayload{
+		TotalMessages: 4,
+		TipHash:       "tip-a",
+		Checkpoints: []protocol.SyncCheckpoint{
+			{Offset: 4, Hash: "hash-a"},
+		},
+	}
+	disagreeing := &protocol.SyncMetaPayload{
+		TotalMessages: 4,
+		TipHash:       "tip-b",
+		Checkpoints: []protocol.SyncCheckpoint{
+			{Offset: 4, Hash: "hash-b"},
+		},
+	}
+
+	_, err := confirmSyncMeta(
+		Config{SyncTrustQuorum: 2},
+		"peer-a",
+		[]string{"peer-a", "peer-b"},
+		protocol.SyncMetaRequestPayload{},
+		primary,
+		func(Config, string, protocol.SyncMetaRequestPayload) (*protocol.SyncMetaPayload, error) {
+			return disagreeing, nil
+		},
+	)
+	if err == nil {
+		t.Fatal("expected quorum failure when peers disagree")
+	}
+}
+
+func TestConfirmSyncMetaAcceptsQuorumAgreement(t *testing.T) {
+	primary := &protocol.SyncMetaPayload{
+		TotalMessages: 4,
+		TipHash:       "tip-a",
+		Checkpoints: []protocol.SyncCheckpoint{
+			{Offset: 4, Hash: "hash-a"},
+		},
+	}
+
+	meta, err := confirmSyncMeta(
+		Config{SyncTrustQuorum: 2},
+		"peer-a",
+		[]string{"peer-a", "peer-b", "peer-c"},
+		protocol.SyncMetaRequestPayload{},
+		primary,
+		func(Config, string, protocol.SyncMetaRequestPayload) (*protocol.SyncMetaPayload, error) {
+			return &protocol.SyncMetaPayload{
+				TotalMessages: primary.TotalMessages,
+				TipHash:       primary.TipHash,
+				Checkpoints: []protocol.SyncCheckpoint{
+					primary.Checkpoints[0],
+				},
+			}, nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("expected quorum success: %v", err)
+	}
+	if meta != primary {
+		t.Fatal("expected primary metadata to be returned after confirmation")
+	}
+}
+
+func TestSyncMetaTrustFingerprintIgnoresMetadataOrder(t *testing.T) {
+	a := &protocol.SyncMetaPayload{
+		TotalMessages: 8,
+		TipHash:       "tip",
+		Checkpoints: []protocol.SyncCheckpoint{
+			{Offset: 8, Hash: "h8"},
+			{Offset: 4, Hash: "h4"},
+		},
+		Accumulators: []protocol.SyncAccumulatorDigest{
+			{Offset: 8, Hash: "a8"},
+			{Offset: 4, Hash: "a4"},
+		},
+		ChunkDigests: []protocol.SyncChunkDigest{
+			{Index: 1, StartOffset: 5, EndOffset: 8, Hash: "c1"},
+			{Index: 0, StartOffset: 1, EndOffset: 4, Hash: "c0"},
+		},
+		WindowDigests: []protocol.SyncWindowDigest{
+			{EndOffset: 8, WindowSize: 4, Hash: "w8"},
+			{EndOffset: 4, WindowSize: 4, Hash: "w4"},
+		},
+	}
+	b := &protocol.SyncMetaPayload{
+		TotalMessages: a.TotalMessages,
+		TipHash:       a.TipHash,
+		Checkpoints: []protocol.SyncCheckpoint{
+			a.Checkpoints[1],
+			a.Checkpoints[0],
+		},
+		Accumulators: []protocol.SyncAccumulatorDigest{
+			a.Accumulators[1],
+			a.Accumulators[0],
+		},
+		ChunkDigests: []protocol.SyncChunkDigest{
+			a.ChunkDigests[1],
+			a.ChunkDigests[0],
+		},
+		WindowDigests: []protocol.SyncWindowDigest{
+			a.WindowDigests[1],
+			a.WindowDigests[0],
+		},
+	}
+
+	if syncMetaTrustFingerprint(a) != syncMetaTrustFingerprint(b) {
+		t.Fatal("expected metadata fingerprint to be stable across ordering differences")
+	}
+}
+
 func TestNormalizeCursorRequiresValidChunkMerkleProofWhenProvided(t *testing.T) {
 	store, err := OpenStore(t.TempDir())
 	if err != nil {

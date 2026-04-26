@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write
 
 jobs:
   build:
@@ -66,6 +67,9 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     needs: build
+    permissions:
+      contents: write
+      id-token: write
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -78,9 +82,45 @@ jobs:
           set -euo pipefail
           cd dist
           sha256sum aether_* > SHA256SUMS
+      - name: Generate Provenance Manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          {
+            echo "{"
+            echo "  \"project\": \"aether\","
+            echo "  \"ref\": \"${GITHUB_REF}\","
+            echo "  \"ref_name\": \"${GITHUB_REF_NAME}\","
+            echo "  \"commit\": \"${GITHUB_SHA}\","
+            echo "  \"workflow\": \"${GITHUB_WORKFLOW}\","
+            echo "  \"run_id\": \"${GITHUB_RUN_ID}\","
+            echo "  \"artifacts\": ["
+            first=1
+            while read -r sha file; do
+              if [ "${first}" -eq 0 ]; then echo ","; fi
+              first=0
+              printf "    {\"name\":\"%s\",\"sha256\":\"%s\"}" "${file}" "${sha}"
+            done < SHA256SUMS
+            echo
+            echo "  ]"
+            echo "}"
+          } > PROVENANCE.json
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+      - name: Sign Release Artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          for file in aether_* SHA256SUMS PROVENANCE.json; do
+            cosign sign-blob --yes --bundle "${file}.sigstore" "${file}"
+          done
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             dist/aether_*
             dist/SHA256SUMS
+            dist/PROVENANCE.json
+            dist/*.sigstore

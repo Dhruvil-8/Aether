@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -19,6 +20,8 @@ type Syncer struct {
 	state *SyncState
 }
 
+type syncMetaFetcher func(Config, string, protocol.SyncMetaRequestPayload) (*protocol.SyncMetaPayload, error)
+
 func NewSyncer(cfg Config, book *PeerBook, store *Store, state *SyncState) *Syncer {
 	return &Syncer{
 		cfg:   cfg,
@@ -29,6 +32,11 @@ func NewSyncer(cfg Config, book *PeerBook, store *Store, state *SyncState) *Sync
 }
 
 func (s *Syncer) SyncOnce(gossip *Gossip, seen map[string]struct{}) error {
+	start := time.Now()
+	defer func() {
+		Metrics().ObserveSyncDuration(time.Since(start))
+	}()
+
 	targets := candidatePeers(s.cfg, s.book)
 	if len(targets) == 0 {
 		return nil
@@ -43,6 +51,13 @@ func (s *Syncer) SyncOnce(gossip *Gossip, seen map[string]struct{}) error {
 		}
 		metaReq := buildSyncMetaRequestForConfig(s.cfg, cursor)
 		meta, err := fetchSyncMeta(s.cfg, peer, metaReq)
+		if err != nil {
+			markFailure(s.book, peer, s.cfg)
+			Metrics().IncSyncFailure()
+			lastErr = err
+			continue
+		}
+		meta, err = confirmSyncMeta(s.cfg, peer, targets, metaReq, meta, fetchSyncMeta)
 		if err != nil {
 			markFailure(s.book, peer, s.cfg)
 			Metrics().IncSyncFailure()
@@ -151,6 +166,112 @@ func (s *Syncer) SyncOnce(gossip *Gossip, seen map[string]struct{}) error {
 		}
 	}
 	return lastErr
+}
+
+func confirmSyncMeta(cfg Config, primary string, targets []string, req protocol.SyncMetaRequestPayload, primaryMeta *protocol.SyncMetaPayload, fetch syncMetaFetcher) (*protocol.SyncMetaPayload, error) {
+	quorum := cfg.SyncTrustQuorum
+	if quorum <= 1 || primaryMeta == nil {
+		return primaryMeta, nil
+	}
+	if quorum > len(targets) {
+		quorum = len(targets)
+	}
+	if quorum <= 1 {
+		return primaryMeta, nil
+	}
+
+	primaryFingerprint := syncMetaTrustFingerprint(primaryMeta)
+	matches := 1
+	for _, peer := range targets {
+		if peer == primary {
+			continue
+		}
+		meta, err := fetch(cfg, peer, req)
+		if err != nil {
+			continue
+		}
+		if syncMetaTrustFingerprint(meta) == primaryFingerprint {
+			matches++
+			if matches >= quorum {
+				return primaryMeta, nil
+			}
+		}
+	}
+	return nil, fmt.Errorf("sync metadata trust quorum not met: got %d matching peer(s), want %d", matches, quorum)
+}
+
+func syncMetaTrustFingerprint(meta *protocol.SyncMetaPayload) string {
+	if meta == nil {
+		return ""
+	}
+	parts := []string{
+		"total=" + strconv.Itoa(meta.TotalMessages),
+		"tip=" + meta.TipHash,
+		"chunk_root=" + meta.ChunkMerkleRoot,
+		"chunk_leaves=" + strconv.Itoa(meta.ChunkMerkleLeaves),
+	}
+	for _, checkpoint := range sortedCheckpoints(meta.Checkpoints) {
+		parts = append(parts, "cp="+strconv.Itoa(checkpoint.Offset)+"="+checkpoint.Hash)
+	}
+	for _, acc := range sortedAccumulators(meta.Accumulators) {
+		parts = append(parts, "acc="+strconv.Itoa(acc.Offset)+"="+acc.Hash)
+	}
+	for _, chunk := range sortedChunkDigests(meta.ChunkDigests) {
+		parts = append(parts, "chunk="+strconv.Itoa(chunk.Index)+"="+strconv.Itoa(chunk.StartOffset)+"="+strconv.Itoa(chunk.EndOffset)+"="+chunk.Hash)
+	}
+	for _, window := range sortedWindowDigests(meta.WindowDigests) {
+		parts = append(parts, "win="+strconv.Itoa(window.EndOffset)+"="+strconv.Itoa(window.WindowSize)+"="+window.Hash)
+	}
+	for _, proof := range sortedChunkProofs(meta.ChunkMerkleProofs) {
+		parts = append(parts, "proof="+strconv.Itoa(proof.Index)+"="+proof.LeafHash+"="+strings.Join(proof.Siblings, ","))
+	}
+	return strings.Join(parts, "|")
+}
+
+func sortedCheckpoints(in []protocol.SyncCheckpoint) []protocol.SyncCheckpoint {
+	out := append([]protocol.SyncCheckpoint(nil), in...)
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].Offset < out[j].Offset
+	})
+	return out
+}
+
+func sortedAccumulators(in []protocol.SyncAccumulatorDigest) []protocol.SyncAccumulatorDigest {
+	out := append([]protocol.SyncAccumulatorDigest(nil), in...)
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].Offset < out[j].Offset
+	})
+	return out
+}
+
+func sortedChunkDigests(in []protocol.SyncChunkDigest) []protocol.SyncChunkDigest {
+	out := append([]protocol.SyncChunkDigest(nil), in...)
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Index == out[j].Index {
+			return out[i].EndOffset < out[j].EndOffset
+		}
+		return out[i].Index < out[j].Index
+	})
+	return out
+}
+
+func sortedWindowDigests(in []protocol.SyncWindowDigest) []protocol.SyncWindowDigest {
+	out := append([]protocol.SyncWindowDigest(nil), in...)
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].EndOffset == out[j].EndOffset {
+			return out[i].WindowSize < out[j].WindowSize
+		}
+		return out[i].EndOffset < out[j].EndOffset
+	})
+	return out
+}
+
+func sortedChunkProofs(in []protocol.SyncChunkProof) []protocol.SyncChunkProof {
+	out := append([]protocol.SyncChunkProof(nil), in...)
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].Index < out[j].Index
+	})
+	return out
 }
 
 func fetchSync(cfg Config, target string, offset, batchSize int) (*protocol.SyncDataPayload, error) {

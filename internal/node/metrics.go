@@ -5,10 +5,25 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
 )
+
+const latencyBucketCount = 9
+
+var latencyBuckets = [latencyBucketCount]time.Duration{
+	50 * time.Millisecond,
+	100 * time.Millisecond,
+	250 * time.Millisecond,
+	500 * time.Millisecond,
+	time.Second,
+	2500 * time.Millisecond,
+	5 * time.Second,
+	10 * time.Second,
+	0,
+}
 
 type RuntimeMetrics struct {
 	messagesAccepted  atomic.Uint64
@@ -22,6 +37,8 @@ type RuntimeMetrics struct {
 	connectionRejects atomic.Uint64
 	resourceRejects   atomic.Uint64
 	openConnections   atomic.Int64
+	syncLatency       latencyHistogram
+	peerDialLatency   latencyHistogram
 }
 
 var runtimeMetrics = &RuntimeMetrics{}
@@ -76,6 +93,14 @@ func (m *RuntimeMetrics) SetOpenConnections(count int) {
 	m.openConnections.Store(int64(count))
 }
 
+func (m *RuntimeMetrics) ObserveSyncDuration(duration time.Duration) {
+	m.syncLatency.observe(duration)
+}
+
+func (m *RuntimeMetrics) ObservePeerDialDuration(duration time.Duration) {
+	m.peerDialLatency.observe(duration)
+}
+
 type RuntimeMetricsSnapshot struct {
 	MessagesAccepted  uint64 `json:"messages_accepted"`
 	MessagesRelayed   uint64 `json:"messages_relayed"`
@@ -88,6 +113,8 @@ type RuntimeMetricsSnapshot struct {
 	ConnectionRejects uint64 `json:"connection_rejects"`
 	ResourceRejects   uint64 `json:"resource_rejects"`
 	OpenConnections   int64  `json:"open_connections"`
+	SyncLatencyCount  uint64 `json:"sync_latency_count"`
+	PeerDialCount     uint64 `json:"peer_dial_count"`
 }
 
 func (m *RuntimeMetrics) Snapshot() RuntimeMetricsSnapshot {
@@ -103,6 +130,8 @@ func (m *RuntimeMetrics) Snapshot() RuntimeMetricsSnapshot {
 		ConnectionRejects: m.connectionRejects.Load(),
 		ResourceRejects:   m.resourceRejects.Load(),
 		OpenConnections:   m.openConnections.Load(),
+		SyncLatencyCount:  m.syncLatency.count.Load(),
+		PeerDialCount:     m.peerDialLatency.count.Load(),
 	}
 }
 
@@ -128,7 +157,51 @@ func (m *RuntimeMetrics) RenderPrometheus() string {
 	b.WriteString("aether_open_connections ")
 	b.WriteString(fmt.Sprintf("%d", m.openConnections.Load()))
 	b.WriteByte('\n')
+	m.syncLatency.renderPrometheus(&b, "aether_sync_duration_seconds")
+	m.peerDialLatency.renderPrometheus(&b, "aether_peer_dial_duration_seconds")
 	return b.String()
+}
+
+type latencyHistogram struct {
+	buckets [latencyBucketCount]atomic.Uint64
+	count   atomic.Uint64
+	sumNS   atomic.Uint64
+}
+
+func (h *latencyHistogram) observe(duration time.Duration) {
+	if duration < 0 {
+		duration = 0
+	}
+	h.count.Add(1)
+	h.sumNS.Add(uint64(duration.Nanoseconds()))
+	for i, bound := range latencyBuckets {
+		if bound == 0 || duration <= bound {
+			h.buckets[i].Add(1)
+		}
+	}
+}
+
+func (h *latencyHistogram) renderPrometheus(b *strings.Builder, name string) {
+	for i, bound := range latencyBuckets {
+		le := "+Inf"
+		if bound > 0 {
+			le = strconv.FormatFloat(bound.Seconds(), 'f', -1, 64)
+		}
+		b.WriteString(name)
+		b.WriteString("_bucket{le=\"")
+		b.WriteString(le)
+		b.WriteString("\"} ")
+		b.WriteString(fmt.Sprintf("%d", h.buckets[i].Load()))
+		b.WriteByte('\n')
+	}
+	b.WriteString(name)
+	b.WriteString("_sum ")
+	b.WriteString(strconv.FormatFloat(float64(h.sumNS.Load())/float64(time.Second), 'f', -1, 64))
+	b.WriteByte('\n')
+	b.WriteString(name)
+	b.WriteString("_count ")
+	b.WriteString(fmt.Sprintf("%d", h.count.Load()))
+	b.WriteByte('\n')
 }
 
 func RunMetricsServer(ctx context.Context, cfg Config, logger *Logger) error {
