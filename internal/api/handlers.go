@@ -77,10 +77,15 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 	}
 	msg.P = nonce
 
-	if err := node.SendMessage(s.cfg, s.peers, "", msg); err != nil {
-		http.Error(w, fmt.Sprintf("relay failed: %v", err), http.StatusBadGateway)
+	// Always save locally first so the message appears in the timeline
+	// even when there are no peers to relay to (gateway mode).
+	if err := s.store.Append(msg); err != nil {
+		http.Error(w, fmt.Sprintf("storage failed: %v", err), http.StatusInternalServerError)
 		return
 	}
+
+	// Best-effort relay to peers; ignore errors (e.g. no peers yet).
+	_ = node.SendMessage(s.cfg, s.peers, "", msg)
 
 	writeJSON(w, PostResponse{
 		OK:      true,

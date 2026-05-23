@@ -82,6 +82,11 @@ func (s *Server) originAllowed(r *http.Request, origin string) bool {
 	if sameOrigin(r, origin) {
 		return true
 	}
+	// Allow tunnel/proxy origins (e.g. *.trycloudflare.com) automatically.
+	parsed, err := url.Parse(origin)
+	if err == nil && strings.HasSuffix(parsed.Host, ".trycloudflare.com") {
+		return true
+	}
 	for _, allowed := range s.cfg.UIAllowedOrigins {
 		if strings.EqualFold(strings.TrimSpace(allowed), origin) {
 			return true
